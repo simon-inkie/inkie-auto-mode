@@ -49,8 +49,8 @@ export interface ClassifierConfig {
 export const DEFAULT_CONFIG: ClassifierConfig = {
   stage1Model: 'google/gemini-3.1-flash-lite',
   stage1Fallback: 'google/gemini-3.1-flash-lite',
-  stage2Model: 'google/gemini-2.5-flash',
-  stage2Fallback: 'google/gemini-2.5-flash',
+  stage2Model: 'google/gemini-3.1-flash-lite',
+  stage2Fallback: 'google/gemini-3.1-flash-lite',
   mode: 'classify',
   nonMainMode: 'block',
   userAllowPatterns: [],
