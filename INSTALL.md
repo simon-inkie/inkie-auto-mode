@@ -18,8 +18,9 @@ Pick whichever runtime you use; they all share the same `core/` classifier.
 ## Requirements
 
 - Node.js 22+
-- A Google Gemini API key (defaults use `gemini-2.5-flash` for all stages —
-  fast, cheap, and accurate enough for classification). You can swap providers
+- A Google Gemini API key (defaults use `gemini-3.1-flash-lite` for both Stage 1
+  and the Stage 2 thinking classifier: fast, cheap, and accurate enough for
+  classification). You can swap providers
   via config; see Configuration Reference below.
 - For the OpenClaw adapter: OpenClaw **2026.4.2+**.
 
@@ -429,10 +430,10 @@ Add to `plugins.load.paths` so OpenClaw discovers it on startup:
         "enabled": true,
         "config": {
           "mode": "classify",
-          "stage1Model": "google/gemini-2.5-flash",
-          "stage1Fallback": "google/gemini-2.5-flash",
-          "stage2Model": "google/gemini-2.5-flash",
-          "stage2Fallback": "google/gemini-2.5-flash"
+          "stage1Model": "google/gemini-3.1-flash-lite",
+          "stage1Fallback": "google/gemini-3.1-flash-lite",
+          "stage2Model": "google/gemini-3.1-flash-lite",
+          "stage2Fallback": "google/gemini-3.1-flash-lite"
         }
       }
     }
@@ -479,10 +480,10 @@ All options live under `plugins.entries.io-auto-mode.config`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `mode` | `classify` | `classify` (normal), `yolo` (allow all), `strict` (block unless on allowlist) |
-| `stage1Model` | `google/gemini-2.5-flash` | Fast LLM for Stage 1 classification |
-| `stage1Fallback` | `google/gemini-2.5-flash` | Fallback if Stage 1 model unavailable |
-| `stage2Model` | `google/gemini-2.5-flash` | Thinking LLM for Stage 2 (escalated blocks) |
-| `stage2Fallback` | `google/gemini-2.5-flash` | Fallback if Stage 2 model unavailable |
+| `stage1Model` | `google/gemini-3.1-flash-lite` | Fast LLM for Stage 1 classification |
+| `stage1Fallback` | `google/gemini-3.1-flash-lite` | Fallback if Stage 1 model unavailable |
+| `stage2Model` | `google/gemini-3.1-flash-lite` | Thinking LLM for Stage 2 (escalated blocks) |
+| `stage2Fallback` | `google/gemini-3.1-flash-lite` | Fallback if Stage 2 model unavailable |
 | `userAllowPatterns` | `[]` | Additional regex patterns to always allow |
 | `userBlockPatterns` | `[]` | Additional regex patterns to always block |
 
