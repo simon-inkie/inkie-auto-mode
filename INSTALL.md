@@ -55,10 +55,14 @@ read:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
+
+`GOOGLE_GENERATIVE_AI_API_KEY` is the canonical name. `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` are still read as fallbacks, in that order, so existing
+installs keep working.
 
 Anthropic / OpenAI / other provider keys go in the same file if you've
 configured those models. The legacy path `~/io-data/.env` is also accepted
@@ -186,7 +190,7 @@ inherit your shell's environment variables. Put your Gemini key in:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
@@ -320,7 +324,7 @@ Gemini key where the hook can read it:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```

@@ -176,7 +176,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the two PreToolUse hooks into ~/.claude/settings.json
 #    (full snippet in INSTALL.md — Bash matcher + Read|Write|Edit matcher)
@@ -202,7 +202,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire four hooks into ~/.cursor/hooks.json
 #    (full snippet in INSTALL.md — beforeSubmitPrompt, beforeShellExecution,
@@ -231,7 +231,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hook can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the PreToolUse hook into your agent's .agents/hooks.json
 #    Replace <repo-path> with the absolute path you cloned to.

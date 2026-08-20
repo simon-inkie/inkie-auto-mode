@@ -67,8 +67,17 @@ export default definePluginEntry({
         apiKey = (auth as { apiKey?: string })?.apiKey;
       } catch { /* fall through */ }
 
-      // Fallback to env vars
-      if (!apiKey && provider === "google") apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+      // Fallback to env vars. GOOGLE_GENERATIVE_AI_API_KEY is the canonical
+      // supported name; GEMINI_API_KEY / GOOGLE_API_KEY (the names Google's
+      // own SDKs auto-discover) are back-compat fallbacks.
+      // `||`, not `??`: these vars are routinely set-but-empty in agent
+      // environments, and `??` only falls through on null/undefined, so an
+      // empty canonical value would mask a populated fallback below it.
+      if (!apiKey && provider === "google")
+        apiKey =
+          process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+          process.env.GEMINI_API_KEY ||
+          process.env.GOOGLE_API_KEY;
       if (!apiKey && provider === "anthropic") apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new Error(`No API key for provider: ${provider}`);
 
