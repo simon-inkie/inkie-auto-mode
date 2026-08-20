@@ -299,6 +299,67 @@ describe("codex-pretooluse: apply_patch classified", () => {
     assert.ok(isDeny(res));
   });
 
+  // REGRESSION, and the reason the guard is not a substring match.
+  //
+  // The guard turns a deny into an allow, so a reason that carries a REAL risk
+  // finding alongside the format complaint must stay a deny. Under a naive
+  // `PATCH_FORMAT_REFUSAL_RE.test(reason)` every case below was silently
+  // converted to allow purely because the reason CONTAINED a refusal phrase --
+  // the model flagged credential exfiltration and the adapter let the patch
+  // through anyway. If any of these go green as allow, the guard has been
+  // loosened back to a substring match.
+  const compoundRiskReasons: string[] = [
+    "block: patch adds credential exfiltration and is not a shell command",
+    "patch adds credential exfiltration and is not a shell command",
+    "The patch appends a curl|bash payload to ~/.bashrc and is not a shell command.",
+    "Not a shell command; the diff also exfiltrates AWS keys to an external endpoint.",
+    "The input is a patch file, not a shell command, and it overwrites the classifier hook itself.",
+  ];
+
+  for (const reason of compoundRiskReasons) {
+    test(`compound risk-plus-format reason stays DENY: ${reason.slice(0, 52)}...`, async () => {
+      const res = await run(makeRequest("apply_patch", { command: PATCH }), {
+        classifyFn: async () => ({
+          decision: "block",
+          reason,
+          stage: "stage2",
+          durationMs: 0,
+        }),
+        loadConfigFn: classifyConfig,
+      });
+      assert.ok(
+        isDeny(res),
+        `a reason carrying a real risk finding was converted to allow by the format-refusal guard: ${reason}`,
+      );
+      // The real reason must survive to the user, not be swallowed.
+      assert.equal(res.hookSpecificOutput?.permissionDecisionReason, reason);
+    });
+  }
+
+  // The other direction: a reason that IS only the format complaint, in a few
+  // shapes the model actually produces, must still abstain to allow. If these
+  // go red, the guard has been over-tightened and benign patches now hard-deny.
+  const pureFormatReasons: string[] = [
+    "not a shell command",
+    "The input is a diff, not a shell command.",
+    "The input is a patch file, not a shell command. It cannot be classified as executable or safe.",
+  ];
+
+  for (const reason of pureFormatReasons) {
+    test(`pure format-only reason still abstains to ALLOW: ${reason.slice(0, 52)}`, async () => {
+      const res = await run(makeRequest("apply_patch", { command: PATCH }), {
+        classifyFn: async () => ({
+          decision: "block",
+          reason,
+          stage: "stage2",
+          durationMs: 0,
+        }),
+        loadConfigFn: classifyConfig,
+      });
+      assert.ok(isAllow(res), `format-only abstention was hard-denied: ${reason}`);
+    });
+  }
+
   test("format-refusal guard does not apply to Bash (shell commands are never format-mismatched)", async () => {
     const res = await run(makeRequest("Bash", { command: "echo hi" }), {
       classifyFn: async () => ({

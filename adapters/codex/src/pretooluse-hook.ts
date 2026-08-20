@@ -131,18 +131,76 @@ function loadConfig(): ClassifierConfig {
 // which this adapter never does.
 const ALLOW: CodexHookResponse = {};
 
-// apply_patch format-refusal guard. The classifier's system prompt frames the
-// task as shell-command classification, so for a benign apply_patch the model
-// sometimes refuses purely because the input "isn't a shell command" rather
-// than judging the patch's actual risk -- a format complaint, not a security
-// decision, and non-deterministic (the same benign documentation patch has
-// been observed flipping between allow and this refusal across back-to-back
-// calls at temperature 0). See run() below for where this is applied and why
-// it is safe to treat as an abstention rather than a real deny.
-const PATCH_FORMAT_REFUSAL_RE =
-  /\b(not a shell command|cannot be classified as (?:executable|safe)|cannot be executed directly)\b/i;
+// apply_patch format-refusal guard. The classifier's system prompt is
+// shell-shaped, so for a benign apply_patch the model sometimes refuses purely
+// because the input "isn't a shell command" rather than judging the patch's
+// actual risk -- a format complaint, not a security decision, and
+// non-deterministic (the same benign documentation patch has been observed
+// flipping between allow and this refusal across back-to-back calls at
+// temperature 0). See run() below for where this is applied and why it is safe
+// to treat as an abstention rather than a real deny.
+//
+// THIS GUARD MUST NEVER BE A SUBSTRING MATCH. It converts a deny into an
+// allow, so any reason that carries real risk content ALONGSIDE the format
+// complaint must stay a deny. A naive `.test(reason)` turns
+//   "patch adds credential exfiltration and is not a shell command"
+// into an allow, because it merely CONTAINS a refusal phrase. The reason must
+// BE the format complaint and nothing else.
+//
+// The check is therefore subtractive and closed by default: remove the known
+// refusal phrases and the benign framing the model wraps them in, then require
+// that every token left over is inert filler. Any unrecognised word -- any
+// noun that could be carrying a risk finding -- fails the check and the deny
+// stands. Widening FORMAT_FILLER_RE is a security-relevant edit.
+
+/** Phrases that ARE the format complaint. At least one must be present. */
+const FORMAT_REFUSAL_PHRASES: RegExp[] = [
+  /\bnot\s+(?:a\s+)?shell\s+command\b/gi,
+  /\bcannot\s+be\s+classified\s+as\s+(?:executable|safe)(?:\s+(?:or|nor|and)\s+(?:executable|safe))?\b/gi,
+  /\bcannot\s+be\s+executed\s+directly\b/gi,
+];
+
+/**
+ * Benign framing the model wraps the complaint in ("the input is a patch
+ * file, ..."). Permitted, but never sufficient on its own -- a reason made
+ * only of framing contains no refusal and is not an abstention.
+ */
+const FORMAT_FRAMING_PHRASES: RegExp[] = [
+  /\b(?:the\s+|this\s+|it\s+)?(?:input|content|text|command|body)?\s*is\s+(?:a\s+)?(?:raw\s+)?(?:unified\s+)?(?:patch(?:\s+file)?|diff(?:\s+file)?)\b/gi,
+];
+
+/**
+ * Tokens allowed to remain once the phrases above are removed. Deliberately
+ * tiny: determiners, copulas and connectives only. No nouns that could carry
+ * a risk finding, no verbs of action.
+ */
+const FORMAT_FILLER_RE =
+  /^(?:the|this|that|it|its|a|an|is|are|was|be|and|or|so|therefore|thus|hence|rather|than|as|only|just|merely|simply|input|content|text|patch|diff|file|body)$/i;
+
 function isPatchFormatRefusal(reason: string | undefined): boolean {
-  return reason !== undefined && PATCH_FORMAT_REFUSAL_RE.test(reason);
+  if (reason === undefined) return false;
+
+  // 1. A refusal phrase must actually be present.
+  let residue = reason;
+  let sawRefusal = false;
+  for (const re of FORMAT_REFUSAL_PHRASES) {
+    re.lastIndex = 0;
+    const stripped = residue.replace(re, " ");
+    if (stripped !== residue) sawRefusal = true;
+    residue = stripped;
+  }
+  if (!sawRefusal) return false;
+
+  // 2. Strip the benign framing the complaint is usually wrapped in.
+  for (const re of FORMAT_FRAMING_PHRASES) {
+    re.lastIndex = 0;
+    residue = residue.replace(re, " ");
+  }
+
+  // 3. Everything left must be inert filler. One unrecognised word -- e.g.
+  //    "exfiltration", "bashrc", "credential" -- and the deny stands.
+  const leftovers = residue.split(/[^A-Za-z']+/).filter((t) => t.length > 0);
+  return leftovers.every((token) => FORMAT_FILLER_RE.test(token));
 }
 
 function denyResponse(reason: string): CodexHookResponse {
