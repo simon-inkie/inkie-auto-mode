@@ -343,6 +343,16 @@ self-hosted included).
 
 For the `Read` / `Write` / `Edit` file-tool classifier, configure `fileZones` (allowRead / allowWrite / deny) in either user-global (`~/.io-auto-mode/config.json`) or per-project (`<project>/.io-auto-mode.json`). Layers merge.
 
+### Optional: Mission Control consent receipts (off by default)
+
+The Claude Code adapter can accept a **signed consent receipt** — evidence that a human tapped a decision card — and upgrade an `ask` or `block` verdict to `allow`. It is upgrade-only (an `allow` is never downgraded) and fails closed on any error.
+
+**It is an authorisation bypass by design, so it is disabled unless BOTH a consent directory and a signing key are configured** — the directory from either the `IO_AUTO_MODE_CONSENT_DIR` env var or `consentDir` in `~/.io-auto-mode/config.json`, and the key from the `MC_CONSENT_HMAC_KEY` env var (env-only; never read from the config file). A receipt only counts if its HMAC verifies, it is inside its TTL, and its scope explicitly names the tool and matches the command — an empty scope authorises nothing. `ask` upgrades are multi-use within the TTL; `block` upgrades additionally require a `confirmed: true` two-tap and are consumed single-use via atomic rename before the allow is emitted.
+
+The consent directory must be **write-denied to the agents being gated** (put it on your `fileZones` deny list) — an agent that can write its own receipts can authorise itself. The HMAC is symmetric, so this defends against sloppy self-authorisation and prompt-injected forgery, **not** against an adversary already running as the same uid.
+
+Full setup, the receipt schema, and the threat boundary: [`INSTALL.md`](./INSTALL.md#optional-mission-control-consent-receipts).
+
 ---
 
 ## Decision log

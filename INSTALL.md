@@ -144,6 +144,98 @@ directory + `/tmp/`. To extend either list, create `~/.io-auto-mode/config.json`
 Or `<project>/.io-auto-mode.json` for project-scoped overrides. Layers merge
 additively; the global deny list cannot be weakened.
 
+### Optional: Mission Control consent receipts
+
+> **This feature can turn a `block` into an `allow`.** It is an authorisation
+> bypass by design. Read this whole section before enabling it, and do not
+> enable it unless you control the process that writes the receipts.
+
+**Off by default.** The layer is inert unless **both** of these are set:
+
+| Setting | Where | Purpose |
+|---|---|---|
+| `IO_AUTO_MODE_CONSENT_DIR` | env var, or `consentDir` in `~/.io-auto-mode/config.json` | Directory the receipt files are read from |
+| `MC_CONSENT_HMAC_KEY` | env var only | Shared key the receipts are signed with |
+
+If either is missing the layer does nothing and the classifier behaves exactly
+as it does without it. There is no partial-enable state.
+
+**What it does.** When the core classifier returns `ask` or `block`, the layer
+looks for a signed consent receipt authorising that specific action. If it
+finds a valid one, the decision becomes `allow`. It is strictly upgrade-only —
+an `allow` is never downgraded — and it fails closed: a missing directory,
+malformed JSON, bad signature, expired window or lost rename race all mean *no
+upgrade*, never an accidental allow.
+
+A receipt only counts if **every** one of these holds:
+
+- the HMAC over its canonical payload verifies against `MC_CONSENT_HMAC_KEY`
+- the current time is inside its `tappedAt` … `expiresAt` window
+- its `authorises` scope names the tool **and** matches the command against an
+  explicit pattern. An absent or empty scope authorises **nothing** — a tap is
+  consent to *an* action, never to any action.
+
+**Receipt format.** One JSON file per receipt in the consent directory, named
+`<decisionId>.json`:
+
+```json
+{
+  "decisionId": "CARD-1234",
+  "agent": "my-agent",
+  "option": "A",
+  "confirmed": false,
+  "authorises": {
+    "tools": ["Bash"],
+    "patterns": ["example-cmd run*"]
+  },
+  "tappedAt": "2026-06-10T15:55:00Z",
+  "expiresAt": "2026-06-10T16:25:00Z",
+  "hmac": "<hex sha256>"
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `decisionId` | yes | Non-empty id; also the filename stem, and what `MC_ACTING_ON=` refers to |
+| `authorises.tools` | yes | Tool names this receipt covers. The tool must appear here |
+| `authorises.patterns` | yes | Command patterns; literal text with `*` wildcards, anchored at both ends. Must be non-empty |
+| `tappedAt` / `expiresAt` | yes | ISO 8601. Outside this window the receipt is ignored |
+| `confirmed` | only for `block` | `true` marks the two-tap. Required to upgrade a `block`; ignored for `ask` |
+| `hmac` | yes | Hex SHA-256 HMAC over the receipt with `hmac` removed and keys sorted at every level |
+| `agent`, `option` | no | Carried for audit; not consulted when deciding |
+
+The signed payload is the receipt object **minus `hmac`**, JSON-serialised with
+object keys sorted at every level, so writer and verifier agree byte-for-byte.
+`signReceipt()` in `adapters/claude-code/src/consent.ts` is the reference
+implementation — write your receipts with that exact canonicalisation or the
+HMAC will not verify.
+
+**Two friction classes**, which behave differently and deliberately so:
+
+| Core verdict | Receipt requirement | Reuse |
+|---|---|---|
+| `ask` (standard) | valid + in scope | **Multi-use** within the TTL |
+| `block` (destructive) | valid + in scope + `confirmed: true` (the two-tap) | **Single-use** — consumed by atomic rename to `<id>.used.json` *before* the allow is emitted, so one tap is one execution and concurrent callers have exactly one winner |
+
+**The directory is part of the security boundary.** The receipt is the
+authoritative artefact, so the consent directory must be **write-denied to the
+agents being gated** — put it on the `deny` list in your `fileZones` config. If
+an agent can write its own receipts, it can authorise itself and the gate is
+worthless. Human-readable approval text sitting in a chat log or thread file is
+never consulted; only a signed receipt counts.
+
+**Threat model — what this does and does not protect against.** It defends
+against an agent sloppily self-authorising, and against prompt-injected text
+talking an agent into believing it was approved. It does **not** defend against
+an adversary already executing as the same uid: the HMAC is symmetric, so the
+verifier holds the signing key, and anything that can read that key can mint
+receipts. If the signer ever needs to live in its own trust domain, this should
+move to asymmetric signing. Treat it as a layer, not a perimeter.
+
+An optional leading `MC_ACTING_ON=<id>` assignment on a command only sets which
+receipt is *tried first*. The scope match is still the real gate, so a lying
+declaration buys nothing.
+
 ---
 
 ## Cursor
