@@ -2,7 +2,14 @@ node_modules/
 dist/
 benchmarks/results/
 *.log
+# Environment + credential material. Broad by design: a bare `.env` left
+# `.env.production`, `.env.staging` and friends committable. No .env file is
+# tracked in this repo, so the wildcard cannot untrack anything; the
+# `!.env.example` negation keeps a documented template possible in future.
 .env
+.env.*
+!.env.example
+*.age
 
 # Per-project Cursor hooks config — leaks absolute /home/<user>/ paths if committed
 .cursor/
