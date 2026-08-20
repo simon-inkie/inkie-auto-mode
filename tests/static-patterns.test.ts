@@ -180,6 +180,77 @@ describe('static-patterns: safe-suffix stripping', () => {
   }
 });
 
+describe('static-patterns: inert filters keep their static allow', () => {
+  // Ergonomics guard, the other half of the laundering regression below.
+  // Every genuinely inert output filter must still strip to a static ALLOW.
+  // If this goes red, someone over-tightened SAFE_SUFFIXES and every
+  // `ls | head` now pays an LLM round-trip.
+  const inertSuffixCases: string[] = [
+    'ls | head -5',
+    'ls | tail -20',
+    'ls | wc -l',
+    'ls | sort',
+    'ls | uniq -c',
+    'ls | less',
+    'ls | cat',
+    'ls | tr "a-z" "A-Z"',
+    'ls | cut -d: -f1',
+    'ls | column -t',
+    'cat package.json | jq .name',
+    'ls | grep foo',
+    'ls | sed -n "1,10p"',
+    'ls | awk "{print $1}"',
+    'ls | head -5 | wc -l',
+  ];
+
+  for (const command of inertSuffixCases) {
+    test(`still allows: ${command}`, () => {
+      const result = evaluateStatic(command);
+      assert.ok(result, `inert filter suffix should still resolve: ${command}`);
+      assert.equal(result.decision, 'allow', `expected allow for: ${command}`);
+      assert.equal(result.stage, 'static');
+    });
+  }
+});
+
+describe('static-patterns: regression, safe-suffix laundering of exec/write payloads', () => {
+  // SAFE_SUFFIXES is stripped BEFORE the SHELL_CHAIN_PATTERN guard runs, so any
+  // exec-or-write command on that list takes its pipe with it and a benign
+  // prefix launders an arbitrary payload straight into a static ALLOW. `tee`
+  // (arbitrary file write) and `python3?\s+-c` (arbitrary code execution) were
+  // both on the list. Neither the payload inside `-c` nor the destination of
+  // `tee` is examined by anything, and the static ALLOW means the LLM
+  // classifier never sees the command at all.
+  //
+  // These must fall through to the LLM. If any goes green as ALLOW again, an
+  // exec/write command has been re-added to SAFE_SUFFIXES.
+  const launderedCases: string[] = [
+    'ls | python3 -c "print(1)"',
+    'ls | python -c "print(1)"',                 // no-3 spelling
+    'cat README.md | python3 -c "print(1)"',
+    'ls 2>/dev/null | python3 -c "print(1)"',    // stacked suffixes
+    'git log | python3 -c "print(1)"',
+    'ls | tee /home/user/.bashrc',
+    'echo evil | tee /home/user/.ssh/authorized_keys',
+    'ls | tee -a /home/user/.profile',
+  ];
+
+  for (const command of launderedCases) {
+    test(`no longer laundered into allow: ${command}`, () => {
+      const result = evaluateStatic(command);
+      assert.equal(
+        result?.decision ?? null,
+        null,
+        `exec/write payload laundered into a static ${result?.decision} by a benign prefix: ${command}`,
+      );
+    });
+  }
+
+  test('bare python3 -c still falls through (unchanged baseline)', () => {
+    assert.equal(evaluateStatic('python3 -c "print(1)"'), null);
+  });
+});
+
 describe('static-patterns: shell chaining disqualifies allow', () => {
   // Shell chains (other than known-safe suffixes) should NOT match allow patterns.
   // They fall through to the LLM.
