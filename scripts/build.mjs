@@ -21,6 +21,8 @@ const CURSOR_ROOT = join(ROOT, "adapters/cursor");
 const CURSOR_DIST = join(CURSOR_ROOT, "dist");
 const AGY_ROOT = join(ROOT, "adapters/antigravity");
 const AGY_DIST = join(AGY_ROOT, "dist");
+const CODEX_ROOT = join(ROOT, "adapters/codex");
+const CODEX_DIST = join(CODEX_ROOT, "dist");
 
 const NODE_BUILTINS = [
   "fs", "fs/promises", "path", "os", "url", "util", "crypto",
@@ -170,3 +172,32 @@ await build({
 makeExecutable(join(AGY_DIST, "pretooluse-classify.js"));
 
 console.log(`[build] agy pretooluse hook   → ${AGY_DIST}/pretooluse-classify.js`);
+
+// ---------------------------------------------------------------------------
+// Codex adapter
+// ---------------------------------------------------------------------------
+
+if (existsSync(CODEX_DIST)) rmSync(CODEX_DIST, { recursive: true });
+mkdirSync(CODEX_DIST, { recursive: true });
+
+// PreToolUse classifier
+await build({
+  entryPoints: [join(CODEX_ROOT, "src/pretooluse-hook.ts")],
+  outfile: join(CODEX_DIST, "pretooluse-hook.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  external: EXTERNALS,
+  sourcemap: "inline",
+  logLevel: "warning",
+  banner: { js: SHEBANG },
+});
+
+// The core classifier reads prompts via `__dirname/../prompts/system.txt`.
+// The bundled dist sits at adapters/codex/dist/, so copy prompts alongside.
+cpSync(join(ROOT, "prompts"), join(CODEX_ROOT, "prompts"), { recursive: true });
+
+makeExecutable(join(CODEX_DIST, "pretooluse-hook.js"));
+
+console.log(`[build] codex pretooluse hook → ${CODEX_DIST}/pretooluse-hook.js`);

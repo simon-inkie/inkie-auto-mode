@@ -4,11 +4,12 @@ A hybrid static + LLM exec security classifier for AI coding agents.
 Intercepts every shell command and file-tool call before execution and
 classifies it as allow / ask / block.
 
-Four adapters are supported:
+Five adapters are supported:
 
 - [Claude Code](#claude-code) — `PreToolUse` hooks (Bash + Read/Write/Edit)
 - [Cursor](#cursor) — `beforeShellExecution` + `beforeReadFile` + `preToolUse` + prompt capture
 - [Antigravity (agy)](#antigravity-agy) — `PreToolUse` classifier (`run_command`)
+- [Codex](#codex) — `PreToolUse` classifier (`Bash` + `apply_patch`)
 - [OpenClaw](#openclaw) — `before_tool_call` plugin
 
 Pick whichever runtime you use; they all share the same `core/` classifier.
@@ -382,6 +383,120 @@ stderr.
 - **Strict unmarshal** — agy parses the result with strict protojson, so the adapter
   emits *exactly* `{"allowTool": bool}` and nothing else (any extra field makes agy
   default to allow).
+
+---
+
+## Codex
+
+Codex fires a `PreToolUse` command hook before every tool call. The adapter
+classifies `Bash` **and** `apply_patch` through the same `core/` classifier as the
+other runtimes; MCP and any other tool passes straight through. The hook reads
+Codex's snake_case request JSON on stdin and emits a response JSON on stdout,
+**always exiting 0** — a block is carried by the response body, never by the exit
+code.
+
+`apply_patch` coverage is the reason this adapter classifies two tools rather than
+one: a patch can write a malicious script, overwrite the hook itself, or append to
+`~/.bashrc`, laundering a payload past a Bash-only gate. Both tools carry their
+content under the same `tool_input.command` field, so both are classified the
+same way.
+
+### Step 1: Clone, install, build
+
+```bash
+git clone https://github.com/simon-inkie/io-auto-mode.git
+cd io-auto-mode
+pnpm install
+node scripts/build.mjs
+```
+
+The build emits `adapters/codex/dist/pretooluse-hook.js`. The wrapper at
+`adapters/codex/bin/pretooluse-hook.sh` uses it by default and falls back to
+running the TypeScript via `tsx` if you're hacking on the adapter.
+
+### Step 2: Provide your API key
+
+Codex hooks run as subprocesses that don't inherit your shell's environment. Drop
+your Gemini key where the hook can read it:
+
+```bash
+mkdir -p ~/.io-auto-mode
+cat > ~/.io-auto-mode/.env <<'EOF'
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+EOF
+chmod 600 ~/.io-auto-mode/.env
+```
+
+Same path every other adapter uses. `GEMINI_API_KEY` and `GOOGLE_API_KEY` are read
+as fallbacks; the legacy `~/io-data/.env` is also accepted.
+
+### Step 3: Wire the PreToolUse hook into `.codex/hooks.json`
+
+Add the following to your `.codex/hooks.json`, substituting `<repo-path>` for the
+absolute path you cloned to. A ready-to-edit template lives at
+`adapters/codex/hooks/hooks.json` — replace its `__ADAPTER_ROOT__` placeholder with
+the absolute path to `adapters/codex/`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo-path>/adapters/codex/bin/pretooluse-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The `.*` matcher is deliberate: the hook fires for every tool, and the adapter
+itself decides what to classify. If you already have a `PreToolUse` entry, merge —
+don't overwrite.
+
+### Step 4: Restart your Codex session
+
+Hook config is read at session start. Restart Codex.
+
+### Step 5: Verify
+
+Ask the agent to run a benign command (e.g. `ls`); it proceeds, resolved by a
+static-allow pattern at sub-millisecond before any LLM call. For each classified
+call the adapter writes a diagnostic JSON line to **stderr** (`event: classified`,
+with `toolName`, `decision` and `stage`), and every classified decision also lands
+in the shared ledger:
+
+```bash
+tail -f ~/.io-auto-mode/auto-mode-log.jsonl
+```
+
+Entries from this adapter are tagged `"adapter": "codex"`, so you can tell them
+apart from the other runtimes sharing the same log.
+
+### Scope + known limitations
+
+- **`Bash` and `apply_patch` are classified; everything else passes through** —
+  MCP tool calls and any other tool are allowed with a loud stderr warning that
+  records the real `tool_name`, so you can see what a future scope-widening pass
+  would need to cover. No classify call and no ledger entry for those.
+- **No native "ask"** — Codex's `PreToolUse` hook has no ask state. The adapter
+  collapses any `ask` decision to **deny** (conservative): an escalated command is
+  refused rather than prompted.
+- **Deny requires a reason** — Codex rejects a deny with an empty or missing
+  `permissionDecisionReason`, so the adapter always supplies one, falling back to a
+  generic string if the classifier returned no reason.
+- **`apply_patch` patches are classified verbatim** — the raw patch text goes to
+  the classifier. Static BLOCK patterns are substring-matched, so a patch body
+  containing shell-looking text can be denied even when the edit is legitimate.
+  That fails safe. In the other direction, a model refusal that objects only to the
+  *format* ("this isn't a shell command") is treated as an abstention rather than a
+  real deny, because static analysis has already cleared the patch content by that
+  point.
 
 ---
 

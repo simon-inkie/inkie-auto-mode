@@ -20,3 +20,5 @@ adapters/claude-code/prompts/
 adapters/cursor/dist/
 adapters/cursor/prompts/
 adapters/antigravity/dist/
+adapters/codex/dist/
+adapters/codex/prompts/
