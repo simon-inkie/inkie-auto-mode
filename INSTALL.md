@@ -4,11 +4,12 @@ A hybrid static + LLM exec security classifier for AI coding agents.
 Intercepts every shell command and file-tool call before execution and
 classifies it as allow / ask / block.
 
-Four adapters are supported:
+Five adapters are supported:
 
 - [Claude Code](#claude-code) — `PreToolUse` hooks (Bash + Read/Write/Edit)
 - [Cursor](#cursor) — `beforeShellExecution` + `beforeReadFile` + `preToolUse` + prompt capture
 - [Antigravity (agy)](#antigravity-agy) — `PreToolUse` classifier (`run_command`)
+- [Codex](#codex) — `PreToolUse` classifier (`Bash` + `apply_patch`)
 - [OpenClaw](#openclaw) — `before_tool_call` plugin
 
 Pick whichever runtime you use; they all share the same `core/` classifier.
@@ -55,10 +56,14 @@ read:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
+
+`GOOGLE_GENERATIVE_AI_API_KEY` is the canonical name. `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` are still read as fallbacks, in that order, so existing
+installs keep working.
 
 Anthropic / OpenAI / other provider keys go in the same file if you've
 configured those models. The legacy path `~/io-data/.env` is also accepted
@@ -139,6 +144,98 @@ directory + `/tmp/`. To extend either list, create `~/.io-auto-mode/config.json`
 Or `<project>/.io-auto-mode.json` for project-scoped overrides. Layers merge
 additively; the global deny list cannot be weakened.
 
+### Optional: Mission Control consent receipts
+
+> **This feature can turn a `block` into an `allow`.** It is an authorisation
+> bypass by design. Read this whole section before enabling it, and do not
+> enable it unless you control the process that writes the receipts.
+
+**Off by default.** The layer is inert unless **both** of these are set:
+
+| Setting | Where | Purpose |
+|---|---|---|
+| `IO_AUTO_MODE_CONSENT_DIR` | env var, or `consentDir` in `~/.io-auto-mode/config.json` | Directory the receipt files are read from |
+| `MC_CONSENT_HMAC_KEY` | env var only | Shared key the receipts are signed with |
+
+If either is missing the layer does nothing and the classifier behaves exactly
+as it does without it. There is no partial-enable state.
+
+**What it does.** When the core classifier returns `ask` or `block`, the layer
+looks for a signed consent receipt authorising that specific action. If it
+finds a valid one, the decision becomes `allow`. It is strictly upgrade-only —
+an `allow` is never downgraded — and it fails closed: a missing directory,
+malformed JSON, bad signature, expired window or lost rename race all mean *no
+upgrade*, never an accidental allow.
+
+A receipt only counts if **every** one of these holds:
+
+- the HMAC over its canonical payload verifies against `MC_CONSENT_HMAC_KEY`
+- the current time is inside its `tappedAt` … `expiresAt` window
+- its `authorises` scope names the tool **and** matches the command against an
+  explicit pattern. An absent or empty scope authorises **nothing** — a tap is
+  consent to *an* action, never to any action.
+
+**Receipt format.** One JSON file per receipt in the consent directory, named
+`<decisionId>.json`:
+
+```json
+{
+  "decisionId": "CARD-1234",
+  "agent": "my-agent",
+  "option": "A",
+  "confirmed": false,
+  "authorises": {
+    "tools": ["Bash"],
+    "patterns": ["example-cmd run*"]
+  },
+  "tappedAt": "2026-06-10T15:55:00Z",
+  "expiresAt": "2026-06-10T16:25:00Z",
+  "hmac": "<hex sha256>"
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `decisionId` | yes | Non-empty id; also the filename stem, and what `MC_ACTING_ON=` refers to |
+| `authorises.tools` | yes | Tool names this receipt covers. The tool must appear here |
+| `authorises.patterns` | yes | Command patterns; literal text with `*` wildcards, anchored at both ends. Must be non-empty |
+| `tappedAt` / `expiresAt` | yes | ISO 8601. Outside this window the receipt is ignored |
+| `confirmed` | only for `block` | `true` marks the two-tap. Required to upgrade a `block`; ignored for `ask` |
+| `hmac` | yes | Hex SHA-256 HMAC over the receipt with `hmac` removed and keys sorted at every level |
+| `agent`, `option` | no | Carried for audit; not consulted when deciding |
+
+The signed payload is the receipt object **minus `hmac`**, JSON-serialised with
+object keys sorted at every level, so writer and verifier agree byte-for-byte.
+`signReceipt()` in `adapters/claude-code/src/consent.ts` is the reference
+implementation — write your receipts with that exact canonicalisation or the
+HMAC will not verify.
+
+**Two friction classes**, which behave differently and deliberately so:
+
+| Core verdict | Receipt requirement | Reuse |
+|---|---|---|
+| `ask` (standard) | valid + in scope | **Multi-use** within the TTL |
+| `block` (destructive) | valid + in scope + `confirmed: true` (the two-tap) | **Single-use** — consumed by atomic rename to `<id>.used.json` *before* the allow is emitted, so one tap is one execution and concurrent callers have exactly one winner |
+
+**The directory is part of the security boundary.** The receipt is the
+authoritative artefact, so the consent directory must be **write-denied to the
+agents being gated** — put it on the `deny` list in your `fileZones` config. If
+an agent can write its own receipts, it can authorise itself and the gate is
+worthless. Human-readable approval text sitting in a chat log or thread file is
+never consulted; only a signed receipt counts.
+
+**Threat model — what this does and does not protect against.** It defends
+against an agent sloppily self-authorising, and against prompt-injected text
+talking an agent into believing it was approved. It does **not** defend against
+an adversary already executing as the same uid: the HMAC is symmetric, so the
+verifier holds the signing key, and anything that can read that key can mint
+receipts. If the signer ever needs to live in its own trust domain, this should
+move to asymmetric signing. Treat it as a layer, not a perimeter.
+
+An optional leading `MC_ACTING_ON=<id>` assignment on a command only sets which
+receipt is *tried first*. The scope match is still the real gate, so a lying
+declaration buys nothing.
+
 ---
 
 ## Cursor
@@ -186,7 +283,7 @@ inherit your shell's environment variables. Put your Gemini key in:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
@@ -320,7 +417,7 @@ Gemini key where the hook can read it:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GEMINI_API_KEY=your-google-gemini-key-here
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
@@ -378,6 +475,120 @@ stderr.
 - **Strict unmarshal** — agy parses the result with strict protojson, so the adapter
   emits *exactly* `{"allowTool": bool}` and nothing else (any extra field makes agy
   default to allow).
+
+---
+
+## Codex
+
+Codex fires a `PreToolUse` command hook before every tool call. The adapter
+classifies `Bash` **and** `apply_patch` through the same `core/` classifier as the
+other runtimes; MCP and any other tool passes straight through. The hook reads
+Codex's snake_case request JSON on stdin and emits a response JSON on stdout,
+**always exiting 0** — a block is carried by the response body, never by the exit
+code.
+
+`apply_patch` coverage is the reason this adapter classifies two tools rather than
+one: a patch can write a malicious script, overwrite the hook itself, or append to
+`~/.bashrc`, laundering a payload past a Bash-only gate. Both tools carry their
+content under the same `tool_input.command` field, so both are classified the
+same way.
+
+### Step 1: Clone, install, build
+
+```bash
+git clone https://github.com/simon-inkie/io-auto-mode.git
+cd io-auto-mode
+pnpm install
+node scripts/build.mjs
+```
+
+The build emits `adapters/codex/dist/pretooluse-hook.js`. The wrapper at
+`adapters/codex/bin/pretooluse-hook.sh` uses it by default and falls back to
+running the TypeScript via `tsx` if you're hacking on the adapter.
+
+### Step 2: Provide your API key
+
+Codex hooks run as subprocesses that don't inherit your shell's environment. Drop
+your Gemini key where the hook can read it:
+
+```bash
+mkdir -p ~/.io-auto-mode
+cat > ~/.io-auto-mode/.env <<'EOF'
+GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+EOF
+chmod 600 ~/.io-auto-mode/.env
+```
+
+Same path every other adapter uses. `GEMINI_API_KEY` and `GOOGLE_API_KEY` are read
+as fallbacks; the legacy `~/io-data/.env` is also accepted.
+
+### Step 3: Wire the PreToolUse hook into `.codex/hooks.json`
+
+Add the following to your `.codex/hooks.json`, substituting `<repo-path>` for the
+absolute path you cloned to. A ready-to-edit template lives at
+`adapters/codex/hooks/hooks.json` — replace its `__ADAPTER_ROOT__` placeholder with
+the absolute path to `adapters/codex/`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo-path>/adapters/codex/bin/pretooluse-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The `.*` matcher is deliberate: the hook fires for every tool, and the adapter
+itself decides what to classify. If you already have a `PreToolUse` entry, merge —
+don't overwrite.
+
+### Step 4: Restart your Codex session
+
+Hook config is read at session start. Restart Codex.
+
+### Step 5: Verify
+
+Ask the agent to run a benign command (e.g. `ls`); it proceeds, resolved by a
+static-allow pattern at sub-millisecond before any LLM call. For each classified
+call the adapter writes a diagnostic JSON line to **stderr** (`event: classified`,
+with `toolName`, `decision` and `stage`), and every classified decision also lands
+in the shared ledger:
+
+```bash
+tail -f ~/.io-auto-mode/auto-mode-log.jsonl
+```
+
+Entries from this adapter are tagged `"adapter": "codex"`, so you can tell them
+apart from the other runtimes sharing the same log.
+
+### Scope + known limitations
+
+- **`Bash` and `apply_patch` are classified; everything else passes through** —
+  MCP tool calls and any other tool are allowed with a loud stderr warning that
+  records the real `tool_name`, so you can see what a future scope-widening pass
+  would need to cover. No classify call and no ledger entry for those.
+- **No native "ask"** — Codex's `PreToolUse` hook has no ask state. The adapter
+  collapses any `ask` decision to **deny** (conservative): an escalated command is
+  refused rather than prompted.
+- **Deny requires a reason** — Codex rejects a deny with an empty or missing
+  `permissionDecisionReason`, so the adapter always supplies one, falling back to a
+  generic string if the classifier returned no reason.
+- **`apply_patch` patches are classified verbatim** — the raw patch text goes to
+  the classifier. Static BLOCK patterns are substring-matched, so a patch body
+  containing shell-looking text can be denied even when the edit is legitimate.
+  That fails safe. In the other direction, a model refusal that objects only to the
+  *format* ("this isn't a shell command") is treated as an abstention rather than a
+  real deny, because static analysis has already cleared the patch content by that
+  point.
 
 ---
 

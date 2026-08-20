@@ -105,9 +105,17 @@ const STATIC_ALLOW: Array<{ pattern: RegExp; reason: string }> = [
  * Known-safe pipe suffixes and redirections. These are stripped from the
  * command before checking ALLOW patterns, so `grep foo | head -5` is treated
  * as just `grep foo` for pattern matching purposes.
+ *
+ * NEVER add a command that can execute code or write files (interpreters,
+ * `tee`, anything with an output-file flag). Stripping happens BEFORE the
+ * SHELL_CHAIN_PATTERN guard in evaluateStatic, so a suffix listed here takes
+ * its pipe with it: the guard never sees the chain, and a benign prefix then
+ * launders the payload into a static ALLOW that the LLM classifier never gets
+ * to see. `ls | python3 -c '<anything>'` and `ls | tee <anywhere>` were both
+ * silently allowed this way until 2026-07-25. Only inert output filters here.
  */
 const SAFE_SUFFIXES = [
-  /\s*\|\s*(head|tail|wc|sort|uniq|tee|less|cat|tr|cut|column|jq|python3?\s+-c)\b[^|;`]*/g,
+  /\s*\|\s*(head|tail|wc|sort|uniq|less|cat|tr|cut|column|jq)\b[^|;`]*/g,
   /\s*\|\s*grep\b[^|;`]*/g,
   /\s*\|\s*sed\s+-n\b[^|;`]*/g,
   /\s*\|\s*awk\b[^|;`]*/g,

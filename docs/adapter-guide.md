@@ -1,6 +1,6 @@
 # Writing an io-auto-mode adapter
 
-So you want to wire io-auto-mode into a runtime that isn't already supported. This is the short tour. The shipped adapters (`claude-code`, `cursor`, `antigravity`, `openclaw`) are the canonical worked examples — none of them is more than ~250 LOC of glue.
+So you want to wire io-auto-mode into a runtime that isn't already supported. This is the short tour. The shipped adapters (`claude-code`, `cursor`, `antigravity`, `codex`, `openclaw`) are the canonical worked examples — none of them is more than ~250 LOC of glue.
 
 The headline: **`core/` does the classification work**. An adapter's job is just to get a tool-call event out of the runtime, hand it to the classifier in the right shape, and translate the decision back. No classifier logic lives in adapter code; if you're tempted to put any there, push it into `core/` first.
 
@@ -30,7 +30,7 @@ runtime tool-call event ──▶ adapter
                 runtime allows/asks/denies the call
 ```
 
-Three shipped adapters, three different runtime surfaces, same five steps.
+Five shipped adapters, five different runtime surfaces, same five steps.
 
 ---
 
@@ -42,6 +42,7 @@ Whatever shape the runtime gives you. Shipped patterns:
 
 - **Cursor + Claude Code:** child process per hook firing. Stdin is hook-event JSON, stdout is a permission JSON. See `adapters/cursor/src/hook.ts` and `adapters/claude-code/src/hook.ts`.
 - **Antigravity (agy):** child process per `PreToolUse` firing, like Cursor/Claude Code, but the result contract is a bare boolean — stdin is agy hook JSON, stdout is exactly `{"allowTool": bool}`. The cleanest example of a binary runtime (no native "ask", so `ask` collapses to block) and of emitting a strict single-field result. See `adapters/antigravity/src/pretooluse-classify.ts`.
+- **Codex:** child process per `PreToolUse` firing, stdin is snake_case request JSON. The result contract is *asymmetric*, and it is the best cautionary example in the repo: the exit code is **always 0**, allow is an **empty body** (`{}`), and deny is `hookSpecificOutput.permissionDecision: "deny"` plus a **non-empty** `permissionDecisionReason`. Emitting an explicit `"allow"` is rejected as unsupported, and exiting 2 routes to a different codepath that ignores stdout entirely. Read `adapters/codex/src/types.ts` before assuming any runtime's documented contract matches its parser. See `adapters/codex/src/pretooluse-hook.ts`.
 - **OpenClaw:** long-lived plugin. Register a `before_tool_call` handler with the plugin API and accumulate transcripts in-process. See `adapters/openclaw/src/plugin.ts`.
 
 If the runtime only gives you a one-shot stdin/stdout interface, you'll likely also want a side-channel cache for any context the runtime doesn't pass on each call — see "Optional: prompt cache" below.
@@ -182,6 +183,7 @@ If you're following the shipped TypeScript pattern:
 - **Cursor adapter** — `adapters/cursor/` + `specs/cursor-adapter.md`. Most complete example: four hooks, prompt cache, ask-collapse, full identity logging.
 - **Claude Code adapter** — `adapters/claude-code/`. Cleanest stdin/stdout example, transcript file mining, two hooks (Bash + file).
 - **Antigravity adapter** — `adapters/antigravity/`. Smallest example: a single `PreToolUse` hook, a bare-boolean result contract (`{"allowTool": bool}`), `run_command`-only with read-only-tool passthrough, and `ask` → block collapse. Good starting point for a binary runtime.
+- **Codex adapter** — `adapters/codex/`. Best example of an asymmetric result contract: allow is an empty body `{}`, deny is `hookSpecificOutput.permissionDecision: "deny"` with a mandatory non-empty reason, and the exit code is always 0 regardless. Also the only adapter that classifies a **patch** tool (`apply_patch`) alongside the shell tool, and the one that shows what to do when the model refuses on format grounds rather than on risk. Worth reading if your runtime's hook contract has an "absence means allow" shape.
 - **OpenClaw adapter** — `adapters/openclaw/`. Plugin-API example, in-process transcript accumulation, runtime-managed secrets.
 
 If you've got an adapter for a new runtime working end-to-end, open an issue or PR — happy to merge it in.

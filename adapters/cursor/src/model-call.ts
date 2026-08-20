@@ -9,8 +9,12 @@
  *
  * Keys are read from process.env. Typical layout (set in
  * ~/.io-auto-mode/.env, loaded by hook.ts before any classifier code runs):
- *   GEMINI_API_KEY=...
+ *   GOOGLE_GENERATIVE_AI_API_KEY=...
  *   ANTHROPIC_API_KEY=...
+ *
+ * GOOGLE_GENERATIVE_AI_API_KEY is the canonical supported name. GEMINI_API_KEY
+ * and GOOGLE_API_KEY (the names Google's own SDKs auto-discover) are kept as
+ * back-compat fallbacks, tried in that order.
  */
 
 import type { ModelCallFn, ModelCallOptions } from "../../../core/types.js";
@@ -20,8 +24,20 @@ export const modelCall: ModelCallFn = async (options: ModelCallOptions) => {
   const modelId = modelParts.join("/");
 
   if (provider === "google" || provider === "gemini") {
-    const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
-    if (!apiKey) throw new Error("No GEMINI_API_KEY / GOOGLE_API_KEY in env");
+    // `||`, not `??`: these vars are routinely set-but-empty in agent
+    // environments, and `??` only falls through on null/undefined. Under `??`
+    // an empty GOOGLE_GENERATIVE_AI_API_KEY would mask a populated
+    // GEMINI_API_KEY or GOOGLE_API_KEY below it. The pre-fix chain hit the
+    // same trap one slot down, an empty GEMINI_API_KEY masking a populated
+    // GOOGLE_API_KEY. `||` treats empty as absent and keeps walking.
+    const apiKey =
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY;
+    if (!apiKey)
+      throw new Error(
+        "No GOOGLE_GENERATIVE_AI_API_KEY / GEMINI_API_KEY / GOOGLE_API_KEY in env",
+      );
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
       {

@@ -50,6 +50,7 @@ import type {
 } from "../../../core/types.js";
 import { readClaudeTranscript } from "./read-transcript.js";
 import { modelCall } from "./model-call.js";
+import { tryConsentUpgrade } from "./consent.js";
 
 interface HookInput {
   session_id?: string;
@@ -177,6 +178,27 @@ async function main() {
     });
   } catch (err) {
     return failClosed(`classifier threw: ${err}`);
+  }
+
+  // A Mission Control card-tap by a human, evidenced by a signed out-of-band
+  // receipt, may upgrade ask/block to allow. Upgrade-only — an allow is never
+  // touched — and the layer fails closed to a no-op. See ./consent.ts.
+  if (result.decision === "ask" || result.decision === "block") {
+    const upgrade = tryConsentUpgrade({
+      tool: input.tool_name ?? "Bash",
+      command,
+      decision: result.decision,
+    });
+    if (upgrade) {
+      result = {
+        ...result,
+        decision: "allow",
+        reason:
+          `MC consent receipt ${upgrade.decisionId}` +
+          `${upgrade.consumed ? " (consumed, single-use)" : ""}` +
+          (result.reason ? ` · was ${result.decision}: ${result.reason}` : ""),
+      };
+    }
   }
 
   try {

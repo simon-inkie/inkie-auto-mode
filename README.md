@@ -3,7 +3,7 @@
 > A hybrid static + LLM exec security classifier for AI coding agents.
 > Stops prompt injection and accidental destruction without making automation impossible.
 
-**Status:** early (`v0.1.0`). OpenClaw, Claude Code, Cursor, and Antigravity (agy) adapters all shipping. Claude Code adapter has been in production use for ~2 weeks; Cursor and agy adapters are fresh. Tier 1 tests cover static patterns + file-hook zone matching + Cursor schema mappings (190 tests); full pipeline + transcript tests on the next tier. Looking for feedback from people running agentic dev workflows.
+**Status:** early (`v0.1.0`). OpenClaw, Claude Code, Cursor, Antigravity (agy), and Codex adapters all shipping. Claude Code adapter has been in production use for ~2 weeks; Cursor, agy and Codex adapters are fresh. Tier 1 tests cover static patterns + file-hook zone matching + Cursor schema mappings + agy/Codex classifier mappings (306 tests); full pipeline + transcript tests on the next tier. Looking for feedback from people running agentic dev workflows.
 
 ---
 
@@ -125,9 +125,10 @@ adapters/
   claude-code/             Claude Code PreToolUse hooks (Bash + file)
   cursor/                  Cursor hooks (prompt + shell + file + write/edit)
   antigravity/             Antigravity (agy) PreToolUse classifier hook
+  codex/                   Codex PreToolUse classifier hook (Bash + apply_patch)
 specs/                     Future-work design specs (AI SDK migration, ...)
 docs/                      Contributor docs — adapter guide etc.
-tests/                     Tier 1 tests — static patterns + file-hook zones + cursor/agy mappings
+tests/                     Tier 1 tests — static patterns + file-hook zones + cursor/agy/codex mappings
 INSTALL.md                 Install + config guide for all adapters
 ```
 
@@ -176,7 +177,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the two PreToolUse hooks into ~/.claude/settings.json
 #    (full snippet in INSTALL.md — Bash matcher + Read|Write|Edit matcher)
@@ -202,7 +203,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire four hooks into ~/.cursor/hooks.json
 #    (full snippet in INSTALL.md — beforeSubmitPrompt, beforeShellExecution,
@@ -231,7 +232,7 @@ node scripts/build.mjs
 
 # 2. Drop your Gemini key where the hook can read it
 mkdir -p ~/.io-auto-mode
-echo 'GEMINI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the PreToolUse hook into your agent's .agents/hooks.json
 #    Replace <repo-path> with the absolute path you cloned to.
@@ -271,6 +272,55 @@ Exact verdicts come from your `config.json` plus the LLM stage, so they adapt to
 
 ---
 
+## Quick start (Codex)
+
+Codex fires a `PreToolUse` hook before every tool call. The adapter gates both `Bash` and `apply_patch` through the same three-layer classifier as the other runtimes.
+
+**Contract:** the hook reads snake_case request JSON on **stdin** and emits a response JSON on **stdout**, always exiting **0**. Allow is an *empty body* (`{}`); deny is `hookSpecificOutput.permissionDecision: "deny"` plus a non-empty `permissionDecisionReason`. MCP and any other tool passes straight through with a stderr warning.
+
+`apply_patch` is classified alongside `Bash` on purpose: a patch can write a malicious script, overwrite the hook itself, or append to `~/.bashrc`, laundering a payload past a shell-only gate.
+
+```bash
+# 1. Clone + install + build the adapter
+git clone https://github.com/simon-inkie/io-auto-mode.git
+cd io-auto-mode
+pnpm install
+node scripts/build.mjs
+
+# 2. Drop your Gemini key where the hook can read it
+mkdir -p ~/.io-auto-mode
+echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+
+# 3. Wire the PreToolUse hook into .codex/hooks.json
+#    Replace <repo-path> with the absolute path you cloned to.
+```
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo-path>/adapters/codex/bin/pretooluse-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+A ready-to-edit template lives at `adapters/codex/hooks/hooks.json`.
+
+Shares the same core classifier, `~/.io-auto-mode/config.json` config, `~/.io-auto-mode/.env` API keys, and `~/.io-auto-mode/auto-mode-log.jsonl` ledger as every other adapter -- decisions from this runtime are tagged `"adapter": "codex"`.
+
+**Scope (v1):** `Bash` and `apply_patch` are classified. Codex has no hook-level "ask" state, so an `ask` decision collapses to **deny** (conservative). MCP and other tools pass through with a loud stderr log recording the real tool name, so a future scope-widening pass has real data to work from.
+
+---
+
 ## Configuration
 
 All options under `plugins.entries.io-auto-mode.config`:
@@ -292,6 +342,16 @@ migration to AI SDK that makes this even smoother (Ollama / LM Studio /
 self-hosted included).
 
 For the `Read` / `Write` / `Edit` file-tool classifier, configure `fileZones` (allowRead / allowWrite / deny) in either user-global (`~/.io-auto-mode/config.json`) or per-project (`<project>/.io-auto-mode.json`). Layers merge.
+
+### Optional: Mission Control consent receipts (off by default)
+
+The Claude Code adapter can accept a **signed consent receipt** — evidence that a human tapped a decision card — and upgrade an `ask` or `block` verdict to `allow`. It is upgrade-only (an `allow` is never downgraded) and fails closed on any error.
+
+**It is an authorisation bypass by design, so it is disabled unless BOTH a consent directory and a signing key are configured** — the directory from either the `IO_AUTO_MODE_CONSENT_DIR` env var or `consentDir` in `~/.io-auto-mode/config.json`, and the key from the `MC_CONSENT_HMAC_KEY` env var (env-only; never read from the config file). A receipt only counts if its HMAC verifies, it is inside its TTL, and its scope explicitly names the tool and matches the command — an empty scope authorises nothing. `ask` upgrades are multi-use within the TTL; `block` upgrades additionally require a `confirmed: true` two-tap and are consumed single-use via atomic rename before the allow is emitted.
+
+The consent directory must be **write-denied to the agents being gated** (put it on your `fileZones` deny list) — an agent that can write its own receipts can authorise itself. The HMAC is symmetric, so this defends against sloppy self-authorisation and prompt-injected forgery, **not** against an adversary already running as the same uid.
+
+Full setup, the receipt schema, and the threat boundary: [`INSTALL.md`](./INSTALL.md#optional-mission-control-consent-receipts).
 
 ---
 
@@ -315,7 +375,8 @@ Useful both for debugging surprising blocks and for reviewing what your agent ha
 - [x] Claude Code adapter (PreToolUse hooks; in production ~2 weeks)
 - [x] Cursor adapter (`beforeSubmitPrompt` + `beforeShellExecution` + `beforeReadFile` + `preToolUse`; prompt-injection-hardening parity with Claude Code)
 - [x] Antigravity (agy) adapter (`PreToolUse` matcher:* -- `run_command` classifier, read-only-tool passthrough, fail-open)
-- [x] Tier 1 tests -- static patterns + file-hook zone matching + Cursor schema mappings + agy classifier (tsx --test)
+- [x] Codex adapter (`PreToolUse` matcher:.* -- `Bash` + `apply_patch` classifier, empty-body-allow contract, fail-open)
+- [x] Tier 1 tests -- static patterns + file-hook zone matching + Cursor schema mappings + agy and Codex classifiers (tsx --test)
 - [x] CI -- GitHub Actions running typecheck + tests on every push / PR
 - [ ] Tier 2 tests — full classifier pipeline (mocked LLM) + transcript prompt-injection coverage
 - [ ] MCP tool classifier — server/tool-name matching
