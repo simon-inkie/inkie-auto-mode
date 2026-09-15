@@ -23,7 +23,7 @@ Reference: <https://cursor.com/docs/hooks>
 | `beforeShellExecution` | Agent shell command, pre-exec | ✓ | Bash classifier |
 | `beforeReadFile` | Agent file read, pre-exec | ✓ | File-hook (Read) |
 | `preToolUse` (matched on Edit/Write only) | Agent file write/edit, pre-exec | ✓ | File-hook (Write/Edit) |
-| `beforeMCPExecution` | Agent MCP tool call, pre-exec | ✗ | MCP classifier (deferred — note: payload's `tool_input` is JSON-stringified, not an object) |
+| `beforeMCPExecution` | Agent MCP tool call, pre-exec | ✓ | Shared MCP classifier; parses JSON-stringified `tool_input` |
 | `beforeTabFileRead` | Tab inline-completion file read | ✗ | File-hook (Read) — also allow/deny only, no ask |
 | `afterFileEdit` | Agent file edit, post-hoc | ✗ | Audit only — too late to prevent |
 | `subagentStart` / `subagentStop` | Subagent lifecycle | ✗ | Audit-only; not core to permission classification |
@@ -111,6 +111,13 @@ Output mapping:
 | `block` | `deny` | `<reason from core>` | `Blocked by io-auto-mode: <reason>. Reword your task or escalate to the user.` |
 | `ask` | `ask` | `<reason from core>` | (omitted — Cursor surfaces ask to the user, not the agent) |
 
+### `beforeMCPExecution` → shared MCP classifier
+
+Shipped for local IDE Agent runs. The adapter requires `mcp_server_name` and
+`tool_name`, parses the JSON-stringified `tool_input`, normalises the identity
+to `mcp__server__tool`, applies canonical-name policy and redacts credentials.
+Malformed input or classifier infrastructure failure returns `deny`.
+
 ### `beforeReadFile` → file-hook
 
 Cursor input:
@@ -148,7 +155,7 @@ Cursor input:
 - `Read` is already handled by `beforeReadFile`
 - `Shell` is already handled by `beforeShellExecution`
 - `Task` (Cursor's subagent tool) is out of scope (see §11)
-- `MCP:<tool>` would be handled by `beforeMCPExecution` once we ship the MCP classifier
+- MCP tools are handled by `beforeMCPExecution` and normalised to `mcp__server__tool`
 - Any other tool name we don't recognise allow-throughs at the adapter (returns `permission: allow` silently)
 
 Widening the matcher to `*` or omitting it would create double-classification with the more specific hooks. Future contributors should add new tool-name mappings here, not widen the matcher.
@@ -316,7 +323,6 @@ Three commits:
 
 ## 11. Out of scope (deferred)
 
-- **`beforeMCPExecution`** — gated on the planned MCP tool classifier (`[ ]` in the roadmap). Cursor's hook surface is ready when we are. Note: payload's `tool_input` is **JSON-stringified**, not an object — the eventual adapter will need to `JSON.parse` before passing to a classifier.
 - **`updated_input` rewriting on `preToolUse`** — Cursor's hook can rewrite the tool input pre-execution (e.g. redact secrets from a file write before it lands). Out of scope for v0.1.x but worth tracking; could be a future security feature ("auto-redact `.env` content from any Write tool call").
 - **`beforeTabFileRead` / `afterTabFileEdit`** — Tab is autonomous inline completion. Arguably *higher* stakes than Agent (no human in the loop, fires per-keystroke), but doubles the integration surface. `beforeTabFileRead` also has the `allow|deny`-only constraint (no `ask`). Worth a follow-up once we have user feedback on whether Tab coverage is a real ask, and whether the classifier latency budget can absorb that frequency.
 - **`subagentStart` / `subagentStop`** — interesting for "audit which subagents fire" but not core to permission classification.

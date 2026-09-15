@@ -34,3 +34,9 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+      - name: Build adapters
+        run: pnpm build
+
+      - name: Smoke-test built MCP hook
+        run: pnpm test:dist

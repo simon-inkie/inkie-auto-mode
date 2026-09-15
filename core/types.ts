@@ -43,6 +43,9 @@ export interface ClassifierConfig {
   nonMainMode: 'block' | 'classify';
   userAllowPatterns: string[];
   userBlockPatterns: string[];
+  /** Regexes matched against canonical MCP names, e.g. mcp__github__get_issue. */
+  mcpAllowPatterns: string[];
+  mcpBlockPatterns: string[];
 }
 
 /** Default configuration */
@@ -55,6 +58,8 @@ export const DEFAULT_CONFIG: ClassifierConfig = {
   nonMainMode: 'block',
   userAllowPatterns: [],
   userBlockPatterns: [],
+  mcpAllowPatterns: [],
+  mcpBlockPatterns: [],
 };
 
 /** Provider-agnostic model call interface */

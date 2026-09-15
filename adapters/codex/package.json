@@ -2,6 +2,6 @@
   "name": "io-auto-mode-codex",
   "version": "0.1.0",
   "private": true,
-  "description": "Codex adapter for io-auto-mode -- PreToolUse hook that gates Codex Bash calls through the hybrid classifier.",
+  "description": "Codex adapter for io-auto-mode -- PreToolUse hook that gates Codex shell, patch and MCP calls through the hybrid classifier.",
   "type": "module"
 }

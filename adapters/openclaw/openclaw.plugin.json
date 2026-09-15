@@ -1,7 +1,7 @@
 {
   "id": "io-auto-mode",
   "name": "Io Auto Mode",
-  "description": "Hybrid static + LLM exec security classifier.",
+  "description": "Hybrid static + LLM exec and MCP security classifier.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -13,7 +13,9 @@
       "stage2Model": { "type": "string", "default": "anthropic/claude-sonnet-4-6" },
       "stage2Fallback": { "type": "string", "default": "google/gemini-3-flash-preview" },
       "userAllowPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
-      "userBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] }
+      "userBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "mcpAllowPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "mcpBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] }
     }
   }
 }

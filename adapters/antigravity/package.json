@@ -2,6 +2,6 @@
   "name": "io-auto-mode-antigravity",
   "version": "0.1.0",
   "private": true,
-  "description": "Antigravity (agy) adapter for io-auto-mode -- PreToolUse hook that gates agy run_command calls through the hybrid classifier.",
+  "description": "Antigravity (agy) adapter for io-auto-mode -- PreToolUse hook for run_command and canonical MCP calls.",
   "type": "module"
 }

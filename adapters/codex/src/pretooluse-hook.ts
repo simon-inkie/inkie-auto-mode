@@ -35,11 +35,12 @@
  *              matches the Antigravity precedent (conservative: with no
  *              human-ask channel, an escalated command is refused rather
  *              than silently allowed).
- *   MCP / any other tool -> allow + LOUD warn log (captures the real tool_name
- *     + a truncated tool_input for a future scope-widening pass; no classify()
- *     call, no ledger entry).
+ *   MCP tools: apply explicit server/tool-name policy, then classify a
+ *     structured and credential-redacted action through the MCP prompt.
+ *   Any other tool -> allow + LOUD warn log (name and input keys only).
  *
- * Classified scope: tool_name === "Bash" OR "apply_patch". Verified against
+ * Classified scope: tool_name === "Bash", "apply_patch", or a canonical
+ * "mcp__server__tool" name. Verified against
  * codex-rs/core/src/hook_runtime.rs: run_pre_tool_use_hooks special-cases both
  * "Bash" and "apply_patch" and reads tool_input.get("command") for each, so both
  * carry the command/patch content under the same `command` field. Classifying
@@ -60,8 +61,11 @@
  * "codex"}), mirroring the Claude Code adapter. A log-write failure is non-fatal
  * and never changes the emitted response.
  *
- * Fail-OPEN on INFRA errors (unparseable stdin, config load failure, classify()
- * throwing unexpectedly, any uncaught exception): allow + loud stderr warn log.
+ * Fail-OPEN on shell/patch INFRA errors (unparseable stdin, config load failure,
+ * classify() throwing unexpectedly, any uncaught exception): allow + loud
+ * stderr warn log. MCP config/classifier failures fail CLOSED because operators
+ * may set Codex's native MCP approval mode to approve and rely on this hook as
+ * the active decision boundary.
  * A broken classifier must never hard-brick the agent. The classifier's own
  * clean block/ask decisions ARE honoured -- classify() never throws on a model
  * failure (it has its own fail-closed logic). This matches both existing
@@ -96,9 +100,13 @@ for (const envPath of ENV_PATHS) {
 }
 
 import { classify } from "../../../core/classifier.js";
+import {
+  classifyMcpCall,
+  parseMcpToolName,
+} from "../../../core/mcp.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
 import { DEFAULT_CONFIG } from "../../../core/types.js";
-import type { ClassifierConfig } from "../../../core/types.js";
+import type { ClassifierConfig, ClassifierDecision } from "../../../core/types.js";
 import { modelCall } from "../../claude-code/src/model-call.js";
 import type { CodexHookResponse, CodexPreToolUseRequest } from "./types.js";
 
@@ -117,8 +125,10 @@ function loadConfig(): ClassifierConfig {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
       return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      // try next candidate
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
+      // Missing optional candidate: try the next path.
     }
   }
   return DEFAULT_CONFIG;
@@ -266,6 +276,66 @@ export async function run(
 
   const toolName = input.tool_name ?? "";
 
+  const mcpIdentity = parseMcpToolName(toolName);
+  if (mcpIdentity) {
+    let config: ClassifierConfig;
+    try {
+      config = loadConfigFn();
+    } catch (err) {
+      warn("infra-error-fail-open", {
+        msg: `loadConfig threw for MCP tool -- failing closed: ${(err as Error).message}`,
+        sessionId: input.session_id,
+        toolName,
+      });
+      return denyResponse("MCP classifier configuration unavailable");
+    }
+
+    let action: string;
+    let result: ClassifierDecision;
+    try {
+      ({ action, result } = await classifyMcpCall({
+        toolName: mcpIdentity.canonicalName,
+        toolInput: input.tool_input,
+        transcript: [],
+        modelCall,
+        config,
+        isMainSession: true,
+        source: "direct",
+        classifyFn,
+      }));
+    } catch (err) {
+      warn("infra-error-fail-open", {
+        msg: `MCP classify() threw unexpectedly -- failing closed: ${(err as Error).message}`,
+        sessionId: input.session_id,
+        toolName,
+      });
+      return denyResponse("MCP classifier unavailable");
+    }
+
+    process.stderr.write(
+      JSON.stringify({
+        level: "info",
+        component: "codex-pretooluse-hook",
+        event: "classified",
+        sessionId: input.session_id,
+        toolName,
+        decision: result.decision,
+        stage: result.stage,
+      }) + "\n",
+    );
+
+    try {
+      logDecisionFn(action, result, "direct", { adapter: "codex" });
+    } catch {
+      // Logging failure must not affect classification.
+    }
+
+    if (result.decision === "allow") return ALLOW;
+    return denyResponse(
+      result.reason ?? `Blocked by io-auto-mode MCP classifier (${result.decision})`,
+    );
+  }
+
   // Bash and apply_patch both carry the command/patch content under
   // tool_input.command (hook_runtime.rs reads tool_input.get("command") for
   // both). Classify each the same way; apply_patch coverage closes the
@@ -369,14 +439,13 @@ export async function run(
     );
   }
 
-  // MCP / any other unhandled tool: allow + LOUD warn, capturing the real
-  // tool_name and a truncated tool_input for a future scope-widening pass. No
-  // classify() call and no ledger entry -- genuinely unhandled tools pass through.
+  // Any other unhandled tool: allow + LOUD warn. Log keys, never raw values:
+  // arbitrary tool inputs may contain credentials or private content.
   warn("unhandled-tool-allow", {
-    msg: `tool not classified in this scope (Bash + apply_patch only) -- allowing and logging for review: ${toolName}`,
+    msg: `unknown non-MCP tool is not classified -- allowing and logging for review: ${toolName}`,
     sessionId: input.session_id,
     toolName,
-    toolInput: JSON.stringify(input.tool_input ?? {}).slice(0, 500),
+    toolInputKeys: Object.keys(input.tool_input ?? {}),
   });
   return ALLOW;
 }

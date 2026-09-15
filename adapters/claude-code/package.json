@@ -2,6 +2,6 @@
   "name": "io-auto-mode-claude-code",
   "version": "0.1.0",
   "private": true,
-  "description": "Claude Code adapter for io-auto-mode — PreToolUse hook that evaluates Bash commands via the hybrid classifier.",
+  "description": "Claude Code adapter for io-auto-mode — PreToolUse hooks for Bash, MCP and file operations.",
   "type": "module"
 }

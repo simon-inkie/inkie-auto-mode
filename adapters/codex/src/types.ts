@@ -15,7 +15,7 @@
 /**
  * Tool input payload. Codex delivers this as an arbitrary JSON value; for the
  * Bash tool it carries `command` (verified: hook_runtime.rs reads
- * `tool_input.get("command")`). Left open-ended for other tools we only log.
+ * `tool_input.get("command")`). MCP tools use the same open-ended object.
  */
 export interface CodexToolInput {
   command?: string;

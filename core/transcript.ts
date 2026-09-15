@@ -70,6 +70,7 @@ export function buildClassifierInput(
   transcript: TranscriptEntry[],
   command: string,
   source: SourceProvenance = 'direct',
+  actionKind: 'shell' | 'mcp' = 'shell',
 ): string {
   const lines: string[] = [];
 
@@ -80,7 +81,11 @@ export function buildClassifierInput(
   }
 
   lines.push('## Action to Classify');
-  lines.push(JSON.stringify({ command, source }));
+  lines.push(JSON.stringify(
+    actionKind === 'mcp'
+      ? { kind: 'mcp', action: command, source }
+      : { kind: 'shell', command, source },
+  ));
 
   return lines.join('\n');
 }

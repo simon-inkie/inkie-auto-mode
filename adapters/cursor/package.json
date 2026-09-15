@@ -2,6 +2,6 @@
   "name": "io-auto-mode-cursor",
   "version": "0.1.0",
   "private": true,
-  "description": "Cursor adapter for io-auto-mode — beforeSubmitPrompt + beforeShellExecution + beforeReadFile + preToolUse hooks via the hybrid classifier.",
+  "description": "Cursor adapter for io-auto-mode — shell, MCP, prompt and file hooks via the hybrid classifier.",
   "type": "module"
 }
