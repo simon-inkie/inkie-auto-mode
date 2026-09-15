@@ -36,7 +36,7 @@ Hooks register at `PreToolUse` for `Bash` (LLM-backed, fail-closed) and
 ### Step 1: Clone, install, build
 
 ```bash
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -257,7 +257,7 @@ populated for richer audit attribution.
 ### Step 1: Clone, install, build
 
 ```bash
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -399,7 +399,7 @@ the agent).
 ### Step 1: Clone, install, build
 
 ```bash
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -481,8 +481,9 @@ stderr.
 ## Codex
 
 Codex fires a `PreToolUse` command hook before every tool call. The adapter
-classifies `Bash` **and** `apply_patch` through the same `core/` classifier as the
-other runtimes; MCP and any other tool passes straight through. The hook reads
+classifies `Bash`, `apply_patch` and canonical `mcp__server__tool` calls through
+the same `core/` classifier as the other runtimes. Unknown non-MCP tools pass
+straight through. The hook reads
 Codex's snake_case request JSON on stdin and emits a response JSON on stdout,
 **always exiting 0** — a block is carried by the response body, never by the exit
 code.
@@ -496,7 +497,7 @@ same way.
 ### Step 1: Clone, install, build
 
 ```bash
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -555,6 +556,23 @@ don't overwrite.
 
 Hook config is read at session start. Restart Codex.
 
+For each MCP server protected by this trusted hook, suppress Codex's duplicate
+native prompt by setting its approval mode to `approve` in `config.toml`:
+
+```toml
+[mcp_servers.example]
+default_tools_approval_mode = "approve"
+```
+
+For a narrower rollout, use a quoted per-tool table:
+
+```toml
+[mcp_servers.example.tools."write-item"]
+approval_mode = "approve"
+```
+
+The trusted `PreToolUse` hook still allows or denies the call before execution.
+
 ### Step 5: Verify
 
 Ask the agent to run a benign command (e.g. `ls`); it proceeds, resolved by a
@@ -572,10 +590,10 @@ apart from the other runtimes sharing the same log.
 
 ### Scope + known limitations
 
-- **`Bash` and `apply_patch` are classified; everything else passes through** —
-  MCP tool calls and any other tool are allowed with a loud stderr warning that
-  records the real `tool_name`, so you can see what a future scope-widening pass
-  would need to cover. No classify call and no ledger entry for those.
+- **`Bash`, `apply_patch` and MCP calls are classified** — MCP calls get a
+  dedicated prompt, deterministic canonical-name policy, credential redaction,
+  and the same audit ledger as shell calls. Unknown non-MCP tools pass through
+  with a warning that records names and input keys, never raw values.
 - **No native "ask"** — Codex's `PreToolUse` hook has no ask state. The adapter
   collapses any `ask` decision to **deny** (conservative): an escalated command is
   refused rather than prompted.

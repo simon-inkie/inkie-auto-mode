@@ -5,13 +5,13 @@
   "type": "module",
   "license": "MIT",
   "author": "Simon Dixon (https://inkie.ink)",
-  "homepage": "https://github.com/simon-inkie/io-auto-mode",
+  "homepage": "https://github.com/simon-inkie/inkie-auto-mode",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/simon-inkie/io-auto-mode.git"
+    "url": "git+https://github.com/simon-inkie/inkie-auto-mode.git"
   },
   "bugs": {
-    "url": "https://github.com/simon-inkie/io-auto-mode/issues"
+    "url": "https://github.com/simon-inkie/inkie-auto-mode/issues"
   },
   "keywords": [
     "claude-code",

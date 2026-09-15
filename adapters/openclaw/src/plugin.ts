@@ -41,6 +41,8 @@ function resolveConfig(pluginConfig?: Record<string, unknown>): ClassifierConfig
     nonMainMode: DEFAULT_CONFIG.nonMainMode,
     userAllowPatterns: (cfg.userAllowPatterns as string[]) ?? DEFAULT_CONFIG.userAllowPatterns,
     userBlockPatterns: (cfg.userBlockPatterns as string[]) ?? DEFAULT_CONFIG.userBlockPatterns,
+    mcpAllowPatterns: (cfg.mcpAllowPatterns as string[]) ?? DEFAULT_CONFIG.mcpAllowPatterns,
+    mcpBlockPatterns: (cfg.mcpBlockPatterns as string[]) ?? DEFAULT_CONFIG.mcpBlockPatterns,
   };
 }
 

@@ -170,7 +170,7 @@ See [`INSTALL.md`](./INSTALL.md) for the full guide. TL;DR:
 
 ```bash
 # 1. Clone + install + build the adapter
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -196,7 +196,7 @@ See [`INSTALL.md`](./INSTALL.md) for the full guide. TL;DR:
 
 ```bash
 # 1. Clone + install + build the adapter
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -225,7 +225,7 @@ Four hooks total: a Bash classifier (`beforeShellExecution`), a file classifier 
 
 ```bash
 # 1. Clone + install + build the adapter
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -274,15 +274,15 @@ Exact verdicts come from your `config.json` plus the LLM stage, so they adapt to
 
 ## Quick start (Codex)
 
-Codex fires a `PreToolUse` hook before every tool call. The adapter gates both `Bash` and `apply_patch` through the same three-layer classifier as the other runtimes.
+Codex fires a `PreToolUse` hook before every tool call. The adapter gates `Bash`, `apply_patch` and canonical `mcp__server__tool` calls through the same three-layer classifier as the other runtimes.
 
-**Contract:** the hook reads snake_case request JSON on **stdin** and emits a response JSON on **stdout**, always exiting **0**. Allow is an *empty body* (`{}`); deny is `hookSpecificOutput.permissionDecision: "deny"` plus a non-empty `permissionDecisionReason`. MCP and any other tool passes straight through with a stderr warning.
+**Contract:** the hook reads snake_case request JSON on **stdin** and emits a response JSON on **stdout**, always exiting **0**. Allow is an *empty body* (`{}`); deny is `hookSpecificOutput.permissionDecision: "deny"` plus a non-empty `permissionDecisionReason`. Unknown non-MCP tools pass through with a stderr warning.
 
 `apply_patch` is classified alongside `Bash` on purpose: a patch can write a malicious script, overwrite the hook itself, or append to `~/.bashrc`, laundering a payload past a shell-only gate.
 
 ```bash
 # 1. Clone + install + build the adapter
-git clone https://github.com/simon-inkie/io-auto-mode.git
+git clone https://github.com/simon-inkie/inkie-auto-mode.git io-auto-mode
 cd io-auto-mode
 pnpm install
 node scripts/build.mjs
@@ -317,7 +317,23 @@ A ready-to-edit template lives at `adapters/codex/hooks/hooks.json`.
 
 Shares the same core classifier, `~/.io-auto-mode/config.json` config, `~/.io-auto-mode/.env` API keys, and `~/.io-auto-mode/auto-mode-log.jsonl` ledger as every other adapter -- decisions from this runtime are tagged `"adapter": "codex"`.
 
-**Scope (v1):** `Bash` and `apply_patch` are classified. Codex has no hook-level "ask" state, so an `ask` decision collapses to **deny** (conservative). MCP and other tools pass through with a loud stderr log recording the real tool name, so a future scope-widening pass has real data to work from.
+**Scope:** `Bash`, `apply_patch` and canonical MCP calls are classified. Codex has no hook-level "ask" state, so an `ask` decision collapses to **deny** (conservative). Unknown non-MCP tools pass through with a stderr warning that records only the tool name and input keys.
+
+MCP arguments use a dedicated prompt rather than shell-command rules. Credential-shaped keys and values are redacted before model calls and ledger writes. Optional `mcpAllowPatterns` and `mcpBlockPatterns` regexes match the full canonical name; block wins when both match.
+
+Codex also has a native MCP approval layer. For a server protected by this trusted `PreToolUse` hook, set its native mode to `approve` so Codex does not show a second prompt before the hook's decision:
+
+```toml
+[mcp_servers.apify]
+default_tools_approval_mode = "approve"
+```
+
+Use a per-tool override for a narrower rollout:
+
+```toml
+[mcp_servers.apify.tools."call-actor"]
+approval_mode = "approve"
+```
 
 ---
 
@@ -332,8 +348,10 @@ All options under `plugins.entries.io-auto-mode.config`:
 | `stage1Fallback` | `google/gemini-3.1-flash-lite` | Stage 1 fallback |
 | `stage2Model` | `google/gemini-3.1-flash-lite` | Thinking LLM for Stage 2 |
 | `stage2Fallback` | `google/gemini-3.1-flash-lite` | Stage 2 fallback |
-| `userAllowPatterns` | `[]` | Extra regex patterns always allowed |
-| `userBlockPatterns` | `[]` | Extra regex patterns always blocked |
+| `userAllowPatterns` | `[]` | Extra shell regex patterns always allowed |
+| `userBlockPatterns` | `[]` | Extra shell regex patterns always blocked |
+| `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |
+| `mcpBlockPatterns` | `[]` | MCP canonical-name regexes blocked before allow or the LLM |
 
 Defaults are all-Gemini for cost + latency. Any provider OpenClaw supports
 (Anthropic, OpenAI, etc.) can be swapped in by changing the model strings —
@@ -375,11 +393,11 @@ Useful both for debugging surprising blocks and for reviewing what your agent ha
 - [x] Claude Code adapter (PreToolUse hooks; in production ~2 weeks)
 - [x] Cursor adapter (`beforeSubmitPrompt` + `beforeShellExecution` + `beforeReadFile` + `preToolUse`; prompt-injection-hardening parity with Claude Code)
 - [x] Antigravity (agy) adapter (`PreToolUse` matcher:* -- `run_command` classifier, read-only-tool passthrough, fail-open)
-- [x] Codex adapter (`PreToolUse` matcher:.* -- `Bash` + `apply_patch` classifier, empty-body-allow contract, fail-open)
+- [x] Codex adapter (`PreToolUse` matcher:.* -- `Bash` + `apply_patch` + MCP classifier, empty-body-allow contract, fail-open)
 - [x] Tier 1 tests -- static patterns + file-hook zone matching + Cursor schema mappings + agy and Codex classifiers (tsx --test)
 - [x] CI -- GitHub Actions running typecheck + tests on every push / PR
 - [ ] Tier 2 tests — full classifier pipeline (mocked LLM) + transcript prompt-injection coverage
-- [ ] MCP tool classifier — server/tool-name matching
+- [x] MCP tool classifier — server/tool-name matching in the Codex adapter
 - [ ] AI SDK migration — provider-agnostic model calls ([spec](./specs/ai-sdk-migration.md))
 
 See [`BACKLOG.md`](./BACKLOG.md) for more.

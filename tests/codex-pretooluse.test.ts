@@ -414,19 +414,39 @@ describe("codex-pretooluse: apply_patch classified", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unhandled tools (MCP / missing name) -- allow + log, NO classify, NO ledger
+// MCP tools -- server/tool policy, redacted model input, and decision mapping
 // ---------------------------------------------------------------------------
 
-describe("codex-pretooluse: unhandled tools allow + log", () => {
-  test("an MCP tool name -> allow", async () => {
-    assert.ok(isAllow(await run(makeRequest("mcp__some_server__do_thing", { x: 1 }))));
+describe("codex-pretooluse: MCP tools", () => {
+  test("MCP allow decision -> allow and passes an MCP action to classify", async () => {
+    let captured: Parameters<typeof import("../core/classifier.js").classify> | undefined;
+    const res = await run(makeRequest("mcp__some_server__do_thing", {
+      x: 1,
+      apiToken: "do-not-leak",
+    }), {
+      classifyFn: (async (...args) => {
+        captured = args;
+        return { decision: "allow", stage: "stage1", durationMs: 0 };
+      }) as typeof import("../core/classifier.js").classify,
+      loadConfigFn: classifyConfig,
+    });
+    assert.ok(isAllow(res));
+    assert.equal(captured?.[4].actionKind, "mcp");
+    assert.match(captured?.[0] ?? "", /"server":"some_server"/);
+    assert.doesNotMatch(captured?.[0] ?? "", /do-not-leak/);
   });
 
-  test("missing tool_name -> allow", async () => {
-    assert.ok(isAllow(await run(JSON.stringify({ session_id: "s", cwd: "/tmp" }))));
+  test("MCP block and ask decisions -> deny", async () => {
+    for (const decision of ["block", "ask"] as const) {
+      const res = await run(makeRequest("mcp__some_server__do_thing", { x: 1 }), {
+        classifyFn: fakeClassify(decision),
+        loadConfigFn: classifyConfig,
+      });
+      assert.ok(isDeny(res));
+    }
   });
 
-  test("MCP tool -> no classify, no ledger write", async () => {
+  test("MCP allow policy resolves without a model call", async () => {
     const spy = spyLog();
     let classifyCalls = 0;
     const res = await run(makeRequest("mcp__some_server__do_thing", { x: 1 }), {
@@ -434,11 +454,84 @@ describe("codex-pretooluse: unhandled tools allow + log", () => {
         classifyCalls += 1;
         return { decision: "allow", stage: "static", durationMs: 0 };
       }) as unknown as typeof import("../core/classifier.js").classify,
+      loadConfigFn: () => ({
+        ...DEFAULT_CONFIG,
+        mcpAllowPatterns: ["^mcp__some_server__do_thing$"],
+      }),
       logDecisionFn: spy.fn,
     });
     assert.ok(isAllow(res));
-    assert.equal(classifyCalls, 0, "classify() must not run for an unhandled tool");
-    assert.equal(spy.calls.length, 0, "no ledger write for an unhandled tool");
+    assert.equal(classifyCalls, 0, "static MCP policy must not call the model classifier");
+    assert.equal(spy.calls.length, 1);
+    assert.equal(spy.calls[0][1].stage, "static");
+  });
+
+  test("MCP block policy takes precedence and denies without a model call", async () => {
+    let classifyCalls = 0;
+    const res = await run(makeRequest("mcp__some_server__delete_all", {}), {
+      classifyFn: (async () => {
+        classifyCalls += 1;
+        return { decision: "allow", stage: "stage1", durationMs: 0 };
+      }) as typeof import("../core/classifier.js").classify,
+      loadConfigFn: () => ({
+        ...DEFAULT_CONFIG,
+        mcpAllowPatterns: ["^mcp__some_server__"],
+        mcpBlockPatterns: ["delete_all$"],
+      }),
+    });
+    assert.ok(isDeny(res));
+    assert.equal(classifyCalls, 0);
+  });
+
+  test("MCP decision writes a redacted ledger entry", async () => {
+    const spy = spyLog();
+    await run(makeRequest("mcp__some_server__do_thing", { password: "secret" }), {
+      classifyFn: fakeClassify("allow"),
+      loadConfigFn: classifyConfig,
+      logDecisionFn: spy.fn,
+    });
+    assert.equal(spy.calls.length, 1);
+    assert.match(spy.calls[0][0], /\[REDACTED\]/);
+    assert.doesNotMatch(spy.calls[0][0], /secret/);
+    assert.deepEqual(spy.calls[0][3], { adapter: "codex" });
+  });
+
+  test("MCP config or classifier infrastructure failure fails closed", async () => {
+    assert.ok(isDeny(await run(makeRequest("mcp__server__tool", {}), {
+      loadConfigFn: () => { throw new Error("config boom"); },
+    })));
+    assert.ok(isDeny(await run(makeRequest("mcp__server__tool", {}), {
+      loadConfigFn: classifyConfig,
+      classifyFn: async () => { throw new Error("classifier boom"); },
+    })));
+  });
+
+  test("malformed MCP policy config falls through to model classification", async () => {
+    let classifyCalls = 0;
+    const malformed = {
+      ...DEFAULT_CONFIG,
+      mcpAllowPatterns: "^mcp__server__tool$",
+      mcpBlockPatterns: { pattern: ".*" },
+    } as unknown as ClassifierConfig;
+    const res = await run(makeRequest("mcp__server__tool", {}), {
+      loadConfigFn: () => malformed,
+      classifyFn: (async () => {
+        classifyCalls += 1;
+        return { decision: "allow", stage: "stage1", durationMs: 0 };
+      }) as typeof import("../core/classifier.js").classify,
+    });
+    assert.ok(isAllow(res));
+    assert.equal(classifyCalls, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Genuinely unhandled tools -- allow without classification
+// ---------------------------------------------------------------------------
+
+describe("codex-pretooluse: unhandled non-MCP tools", () => {
+  test("missing tool_name -> allow", async () => {
+    assert.ok(isAllow(await run(JSON.stringify({ session_id: "s", cwd: "/tmp" }))));
   });
 });
 
@@ -502,7 +595,10 @@ describe("codex-pretooluse: audit ledger", () => {
 
 describe("codex-pretooluse: response shapes", () => {
   test("allow body is exactly {}", async () => {
-    const res = await run(makeRequest("mcp__some_server__do_thing", {}));
+    const res = await run(makeRequest("mcp__some_server__do_thing", {}), {
+      classifyFn: fakeClassify("allow"),
+      loadConfigFn: classifyConfig,
+    });
     assert.deepEqual(res, {});
   });
 
@@ -531,7 +627,10 @@ describe("codex-pretooluse: subprocess wire + exit-code contract", () => {
   // the developer's own ~/.io-auto-mode/config.json (which could be yolo).
   const cfgDir = mkdtempSync(join(tmpdir(), "codex-hook-test-"));
   const cfgPath = join(cfgDir, "config.json");
-  writeFileSync(cfgPath, JSON.stringify({ mode: "classify" }));
+  writeFileSync(cfgPath, JSON.stringify({
+    mode: "classify",
+    mcpAllowPatterns: ["^mcp__some_server__do_thing$"],
+  }));
 
   // Redirect the shared audit ledger away from the developer's real one.
   // main() calls setLogPath(resolve(homedir(), ".io-auto-mode", ...)), so a
@@ -576,7 +675,7 @@ describe("codex-pretooluse: subprocess wire + exit-code contract", () => {
     assert.deepEqual(body, {});
   });
 
-  test("unhandled MCP tool: exit code 0 AND empty body (no classify)", () => {
+  test("MCP allow policy: exit code 0 AND empty body", () => {
     const r = invoke(makeRequest("mcp__some_server__do_thing", { x: 1 }));
     assert.equal(r.status, 0, `expected exit 0, got ${r.status}; stderr=${r.stderr}`);
     const body = JSON.parse(r.stdout);

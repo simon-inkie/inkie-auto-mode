@@ -15,16 +15,16 @@ import type {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-let systemPromptCache: string | null = null;
+const systemPromptCache: Partial<Record<'shell' | 'mcp', string>> = {};
 
-function getSystemPrompt(): string {
-  if (!systemPromptCache) {
-    systemPromptCache = readFileSync(
-      resolve(__dirname, '..', 'prompts', 'system.txt'),
+function getSystemPrompt(actionKind: 'shell' | 'mcp'): string {
+  if (!systemPromptCache[actionKind]) {
+    systemPromptCache[actionKind] = readFileSync(
+      resolve(__dirname, '..', 'prompts', actionKind === 'mcp' ? 'mcp-system.txt' : 'system.txt'),
       'utf-8',
     );
   }
-  return systemPromptCache;
+  return systemPromptCache[actionKind] as string;
 }
 
 const STAGE1_SUFFIX = '\n\nErr on the side of blocking. Respond with exactly one word: ALLOW or BLOCK';
@@ -44,9 +44,13 @@ export async function classify(
   transcript: TranscriptEntry[],
   modelCall: ModelCallFn,
   config: ClassifierConfig,
-  options: { isMainSession?: boolean; source?: SourceProvenance } = {},
+  options: {
+    isMainSession?: boolean;
+    source?: SourceProvenance;
+    actionKind?: 'shell' | 'mcp';
+  } = {},
 ): Promise<ClassifierDecision> {
-  const { isMainSession = true, source = 'direct' } = options;
+  const { isMainSession = true, source = 'direct', actionKind = 'shell' } = options;
   const startTime = Date.now();
 
   // Mode overrides
@@ -54,6 +58,9 @@ export async function classify(
     return { decision: 'allow', stage: 'static', durationMs: 0, reason: 'YOLO mode — all exec allowed' };
   }
   if (config.mode === 'strict') {
+    if (actionKind === 'mcp') {
+      return { decision: 'block', stage: 'static', durationMs: 0, reason: 'Strict mode — MCP tool is not on the explicit allowlist' };
+    }
     // In strict mode, only static allows pass
     const staticResult = evaluateStatic(command);
     if (staticResult?.decision === 'allow') return staticResult;
@@ -61,14 +68,16 @@ export async function classify(
   }
 
   // Layer 0: Static patterns
-  const staticResult = evaluateStatic(command);
-  if (staticResult !== null) {
-    return staticResult;
+  if (actionKind === 'shell') {
+    const staticResult = evaluateStatic(command);
+    if (staticResult !== null) {
+      return staticResult;
+    }
   }
 
   // Build classifier input
-  const userMessage = buildClassifierInput(transcript, command, source);
-  const systemPrompt = getSystemPrompt();
+  const userMessage = buildClassifierInput(transcript, command, source, actionKind);
+  const systemPrompt = getSystemPrompt(actionKind);
 
   // Stage 1: Fast LLM
   const stage1Result = await runStage1(
@@ -281,5 +290,6 @@ function finaliseStage2(
 
 /** Reset the cached system prompt (useful for testing) */
 export function resetSystemPromptCache(): void {
-  systemPromptCache = null;
+  delete systemPromptCache.shell;
+  delete systemPromptCache.mcp;
 }
