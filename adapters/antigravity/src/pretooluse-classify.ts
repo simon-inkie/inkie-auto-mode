@@ -7,6 +7,7 @@
  *
  * Decision mapping:
  *   run_command: classify args.CommandLine -> allow->true, block->false, ask->false
+ *   mcp__server__tool: classify redacted structured args -> same bool mapping
  *   read-only / agy-internal tools -> allow (no classify call)
  *   unknown tool -> allow + LOUD warn log (captures real shapes for future review)
  *
@@ -49,8 +50,10 @@ for (const envPath of ENV_PATHS) {
 }
 
 import { classify } from "../../../core/classifier.js";
+import { classifyMcpCall, parseMcpToolName } from "../../../core/mcp.js";
+import { logDecision, setLogPath } from "../../../core/logger.js";
 import { DEFAULT_CONFIG } from "../../../core/types.js";
-import type { ClassifierConfig } from "../../../core/types.js";
+import type { ClassifierConfig, ClassifierDecision } from "../../../core/types.js";
 import { modelCall } from "../../claude-code/src/model-call.js";
 import type { AgyPreToolUseInput, AgyPreToolResult } from "./types.js";
 
@@ -86,8 +89,10 @@ function loadConfig(): ClassifierConfig {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
       return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      // try next candidate
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
+      // Missing optional candidate: try the next path.
     }
   }
   return DEFAULT_CONFIG;
@@ -110,8 +115,17 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+export interface RunDeps {
+  classifyFn?: typeof classify;
+  loadConfigFn?: () => ClassifierConfig;
+  logDecisionFn?: typeof logDecision;
+}
+
 // --- Core handler (exported for unit tests) ---
-export async function run(rawInput: string): Promise<AgyPreToolResult> {
+export async function run(rawInput: string, deps: RunDeps = {}): Promise<AgyPreToolResult> {
+  const classifyFn = deps.classifyFn ?? classify;
+  const loadConfigFn = deps.loadConfigFn ?? loadConfig;
+  const logDecisionFn = deps.logDecisionFn ?? logDecision;
   let input: AgyPreToolUseInput;
   try {
     const parsed: unknown = JSON.parse(rawInput);
@@ -140,6 +154,64 @@ export async function run(rawInput: string): Promise<AgyPreToolResult> {
   }
 
   const toolName = input.toolCall?.name ?? "";
+  const mcpIdentity = parseMcpToolName(toolName);
+
+  if (mcpIdentity) {
+    let config: ClassifierConfig;
+    try {
+      config = loadConfigFn();
+    } catch (err) {
+      process.stderr.write(JSON.stringify({
+        level: "warn",
+        component: "agy-pretooluse-classify",
+        event: "infra-error-fail-closed",
+        msg: `MCP config load failed: ${(err as Error).message}`,
+        sessionId: input.conversationId,
+        toolName,
+      }) + "\n");
+      return BLOCK;
+    }
+
+    let action: string;
+    let result: ClassifierDecision;
+    try {
+      ({ action, result } = await classifyMcpCall({
+        toolName: mcpIdentity.canonicalName,
+        toolInput: input.toolCall?.args,
+        transcript: [],
+        modelCall,
+        config,
+        isMainSession: true,
+        source: "direct",
+        classifyFn,
+      }));
+    } catch (err) {
+      process.stderr.write(JSON.stringify({
+        level: "warn",
+        component: "agy-pretooluse-classify",
+        event: "infra-error-fail-closed",
+        msg: `MCP classifier failed: ${(err as Error).message}`,
+        sessionId: input.conversationId,
+        toolName,
+      }) + "\n");
+      return BLOCK;
+    }
+
+    try {
+      logDecisionFn(action, result, "direct", { adapter: "antigravity" });
+    } catch { /* logging is non-fatal */ }
+
+    process.stderr.write(JSON.stringify({
+      level: "info",
+      component: "agy-pretooluse-classify",
+      event: "classified",
+      sessionId: input.conversationId,
+      toolName,
+      decision: result.decision,
+      stage: result.stage,
+    }) + "\n");
+    return result.decision === "allow" ? ALLOW : BLOCK;
+  }
 
   // Read-only and agy-internal tools: always allow.
   if (ALLOW_TOOLS.has(toolName)) {
@@ -156,7 +228,7 @@ export async function run(rawInput: string): Promise<AgyPreToolResult> {
 
     let config: ClassifierConfig;
     try {
-      config = loadConfig();
+      config = loadConfigFn();
     } catch (err) {
       process.stderr.write(
         JSON.stringify({
@@ -172,7 +244,7 @@ export async function run(rawInput: string): Promise<AgyPreToolResult> {
 
     let decision: string;
     try {
-      const result = await classify(cmdLine, [], modelCall, config, {
+      const result = await classifyFn(cmdLine, [], modelCall, config, {
         isMainSession: true,
         source: "direct",
       });
@@ -223,6 +295,7 @@ export async function run(rawInput: string): Promise<AgyPreToolResult> {
 
 // --- Main entry (only runs when invoked as a script) ---
 async function main(): Promise<void> {
+  setLogPath(resolve(homedir(), ".io-auto-mode", "auto-mode-log.jsonl"));
   let raw: string;
   try {
     raw = await readStdin();

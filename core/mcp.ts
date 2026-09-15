@@ -1,9 +1,22 @@
-import type { ClassifierConfig, ClassifierDecision } from './types.js';
+import { classify } from './classifier.js';
+import type {
+  ClassifierConfig,
+  ClassifierDecision,
+  ModelCallFn,
+  SourceProvenance,
+  TranscriptEntry,
+} from './types.js';
 
 export interface McpToolIdentity {
   canonicalName: string;
   server: string;
   tool: string;
+}
+
+export interface McpClassification {
+  action: string;
+  identity: McpToolIdentity;
+  result: ClassifierDecision;
 }
 
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|api[-_]?key|private[-_]?key|credential)/i;
@@ -21,6 +34,18 @@ export function parseMcpToolName(toolName: string): McpToolIdentity | null {
     server: toolName.slice(5, separator),
     tool: toolName.slice(separator + 2),
   };
+}
+
+/**
+ * OpenClaw MCP bundle tools are registered as `<server>__<tool>`. Normalise
+ * that provider-safe runtime name into the canonical name used by policy.
+ * Native tools without the separator are deliberately left alone.
+ */
+export function parseOpenClawMcpToolName(toolName: string): McpToolIdentity | null {
+  if (toolName.startsWith('mcp__')) return parseMcpToolName(toolName);
+  const separator = toolName.indexOf('__');
+  if (separator <= 0 || separator >= toolName.length - 2) return null;
+  return parseMcpToolName(`mcp__${toolName}`);
 }
 
 function redactString(value: string): string {
@@ -42,6 +67,22 @@ function redact(value: unknown, depth = 0): unknown {
     return result;
   }
   return value;
+}
+
+function redactToolInput(input: string | undefined): string | undefined {
+  if (input === undefined) return undefined;
+  try {
+    return JSON.stringify(redact(JSON.parse(input)));
+  } catch {
+    return redactString(input);
+  }
+}
+
+/** Redact credential material from prior tool inputs before an MCP model call. */
+export function redactMcpTranscript(transcript: TranscriptEntry[]): TranscriptEntry[] {
+  return transcript.map((entry) => entry.role === 'tool'
+    ? { ...entry, input: redactToolInput(entry.input) }
+    : { ...entry });
 }
 
 /** Stable, redacted action string safe for model input and the audit ledger. */
@@ -88,4 +129,34 @@ export function evaluateMcpPolicy(
     return { decision: 'allow', reason: 'Matched MCP allow pattern', stage: 'static', durationMs: 0 };
   }
   return null;
+}
+
+/** Shared MCP path used by runtime adapters after normalising their wire input. */
+export async function classifyMcpCall(options: {
+  toolName: string;
+  toolInput: Record<string, unknown> | undefined;
+  transcript: TranscriptEntry[];
+  modelCall: ModelCallFn;
+  config: ClassifierConfig;
+  isMainSession?: boolean;
+  source?: SourceProvenance;
+  classifyFn?: typeof classify;
+}): Promise<McpClassification> {
+  const identity = parseMcpToolName(options.toolName);
+  if (!identity) throw new Error(`Invalid canonical MCP tool name: ${options.toolName}`);
+  const action = formatMcpAction(identity, options.toolInput);
+  const result = evaluateMcpPolicy(identity, options.config) ?? await (
+    options.classifyFn ?? classify
+  )(
+    action,
+    redactMcpTranscript(options.transcript),
+    options.modelCall,
+    options.config,
+    {
+      isMainSession: options.isMainSession ?? true,
+      source: options.source ?? 'direct',
+      actionKind: 'mcp',
+    },
+  );
+  return { action, identity, result };
 }

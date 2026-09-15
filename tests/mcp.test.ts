@@ -1,9 +1,12 @@
 import { describe, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
+  classifyMcpCall,
   evaluateMcpPolicy,
   formatMcpAction,
   parseMcpToolName,
+  parseOpenClawMcpToolName,
+  redactMcpTranscript,
 } from '../core/mcp.js';
 import { classify } from '../core/classifier.js';
 import { DEFAULT_CONFIG } from '../core/types.js';
@@ -21,6 +24,17 @@ describe('MCP tool identity', () => {
     assert.equal(parseMcpToolName('Bash'), null);
     assert.equal(parseMcpToolName('mcp__missing_tool'), null);
     assert.equal(parseMcpToolName('mcp____tool'), null);
+  });
+
+  test('normalises OpenClaw bundle tool names and leaves native names alone', () => {
+    assert.deepEqual(parseOpenClawMcpToolName('github__get_issue'), {
+      canonicalName: 'mcp__github__get_issue',
+      server: 'github',
+      tool: 'get_issue',
+    });
+    assert.equal(parseOpenClawMcpToolName('exec'), null);
+    assert.equal(parseOpenClawMcpToolName('__missing_server'), null);
+    assert.equal(parseOpenClawMcpToolName('missing_tool__'), null);
   });
 });
 
@@ -42,6 +56,25 @@ describe('MCP action formatting', () => {
       action.arguments.command,
       'curl https://[REDACTED]@example.test token=[REDACTED]',
     );
+  });
+
+  test('redacts credentials in prior tool transcript inputs', () => {
+    const redacted = redactMcpTranscript([
+      {
+        role: 'tool',
+        name: 'mcp__example__read',
+        input: JSON.stringify({ authorization: 'Bearer old-secret', nested: { token: 'old-token' }, safe: 42 }),
+      },
+      { role: 'tool', name: 'Bash', input: 'curl -H "Authorization: Bearer raw-secret" example.test' },
+      { role: 'user', source: 'direct', text: 'keep user context' },
+    ]);
+    assert.deepEqual(JSON.parse(redacted[0].input!), {
+      authorization: '[REDACTED]',
+      nested: { token: '[REDACTED]' },
+      safe: 42,
+    });
+    assert.doesNotMatch(redacted[1].input!, /raw-secret/);
+    assert.equal(redacted[2].text, 'keep user context');
   });
 
   test('caps oversized arguments while keeping valid JSON', () => {
@@ -98,5 +131,50 @@ describe('MCP model classification', () => {
     assert.equal(result.decision, 'allow');
     assert.equal(result.stage, 'stage1');
     assert.equal(calls, 1);
+  });
+
+  test('shared path applies policy before the model and returns a redacted action', async () => {
+    let calls = 0;
+    const result = await classifyMcpCall({
+      toolName: 'mcp__github__get_issue',
+      toolInput: { token: 'secret', issue: 42 },
+      transcript: [],
+      modelCall: async () => {
+        calls += 1;
+        return 'BLOCK';
+      },
+      config: {
+        ...DEFAULT_CONFIG,
+        mcpAllowPatterns: ['^mcp__github__get_issue$'],
+      },
+    });
+    assert.equal(result.result.decision, 'allow');
+    assert.equal(calls, 0);
+    assert.deepEqual(JSON.parse(result.action).arguments, {
+      token: '[REDACTED]',
+      issue: 42,
+    });
+  });
+
+  test('shared path never sends current or prior MCP credentials to the model', async () => {
+    let modelInput = '';
+    const result = await classifyMcpCall({
+      toolName: 'mcp__github__create_issue',
+      toolInput: { authorization: 'Bearer current-secret', title: 'safe title' },
+      transcript: [{
+        role: 'tool',
+        name: 'mcp__github__get_issue',
+        input: JSON.stringify({ token: 'prior-secret', issue: 42 }),
+      }],
+      modelCall: async (options) => {
+        modelInput = options.messages[0].content;
+        return 'ALLOW';
+      },
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(result.result.decision, 'allow');
+    assert.doesNotMatch(modelInput, /current-secret|prior-secret/);
+    assert.match(modelInput, /\[REDACTED\]/);
+    assert.doesNotMatch(result.action, /current-secret/);
   });
 });

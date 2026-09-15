@@ -6,9 +6,9 @@ classifies it as allow / ask / block.
 
 Five adapters are supported:
 
-- [Claude Code](#claude-code) — `PreToolUse` hooks (Bash + Read/Write/Edit)
-- [Cursor](#cursor) — `beforeShellExecution` + `beforeReadFile` + `preToolUse` + prompt capture
-- [Antigravity (agy)](#antigravity-agy) — `PreToolUse` classifier (`run_command`)
+- [Claude Code](#claude-code) — `PreToolUse` hooks (Bash + MCP + Read/Write/Edit)
+- [Cursor](#cursor) — shell + MCP + file hooks + prompt capture
+- [Antigravity (agy)](#antigravity-agy) — `PreToolUse` classifier (`run_command` + canonical MCP)
 - [Codex](#codex) — `PreToolUse` classifier (`Bash` + `apply_patch`)
 - [OpenClaw](#openclaw) — `before_tool_call` plugin
 
@@ -29,8 +29,8 @@ Pick whichever runtime you use; they all share the same `core/` classifier.
 
 ## Claude Code
 
-Hooks register at `PreToolUse` for `Bash` (LLM-backed, fail-closed) and
-`Read|Write|Edit` (path-based, sub-millisecond). All decisions log to
+Hooks register at `PreToolUse` for `Bash` and `mcp__.*` (LLM-backed,
+fail-closed) and `Read|Write|Edit` (path-based, sub-millisecond). All decisions log to
 `~/.io-auto-mode/auto-mode-log.jsonl`.
 
 ### Step 1: Clone, install, build
@@ -90,6 +90,17 @@ substituting `<repo-path>` for the absolute path you cloned to:
         ]
       },
       {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo-path>/adapters/claude-code/bin/classify.sh",
+            "timeout": 8,
+            "async": false
+          }
+        ]
+      },
+      {
         "matcher": "Read|Write|Edit",
         "hooks": [
           {
@@ -106,7 +117,7 @@ substituting `<repo-path>` for the absolute path you cloned to:
 ```
 
 If you already have `PreToolUse` entries for other tools, merge — don't
-overwrite. The two `matcher` keys (`Bash` and `Read|Write|Edit`) target
+overwrite. The three `matcher` keys (`Bash`, `mcp__.*` and `Read|Write|Edit`) target
 different tool-call types and are independent.
 
 ### Step 4: Restart your Claude Code session
@@ -240,12 +251,13 @@ declaration buys nothing.
 
 ## Cursor
 
-Cursor's hooks system fires at four points the classifier cares about:
+Cursor's hooks system fires at five points the classifier cares about:
 
 - `beforeSubmitPrompt` — captures the user's prompt + attachments to a
   per-conversation cache so the next shell-execution call has conversation
   context for prompt-injection-hardened classification.
 - `beforeShellExecution` — Bash classifier, LLM-backed, fail-closed.
+- `beforeMCPExecution` — MCP classifier, LLM-backed, credential-redacted and fail-closed.
 - `beforeReadFile` — file classifier, path-based, sub-millisecond.
 - `preToolUse` (matched on `Edit|Write` only) — file classifier for write/edit
   tool calls.
@@ -267,7 +279,7 @@ The build emits three handler bundles into `adapters/cursor/dist/`:
 
 ```
 adapters/cursor/dist/
-├── hook.js          # beforeShellExecution
+├── hook.js          # beforeShellExecution + beforeMCPExecution
 ├── file-hook.js     # beforeReadFile + preToolUse(Edit|Write)
 └── prompt-hook.js   # beforeSubmitPrompt
 ```
@@ -292,7 +304,7 @@ Same path the Claude Code adapter uses. Anthropic/OpenAI keys go in the same
 file if you've configured those models. The legacy `~/io-data/.env` is also
 accepted for back-compat.
 
-### Step 3: Wire the four hooks into `~/.cursor/hooks.json`
+### Step 3: Wire the five hooks into `~/.cursor/hooks.json`
 
 Add the following, substituting `<repo-path>` for the absolute path you
 cloned to:
@@ -309,6 +321,13 @@ cloned to:
       }
     ],
     "beforeShellExecution": [
+      {
+        "command": "<repo-path>/adapters/cursor/bin/classify-shell.sh",
+        "timeout": 8,
+        "failClosed": true
+      }
+    ],
+    "beforeMCPExecution": [
       {
         "command": "<repo-path>/adapters/cursor/bin/classify-shell.sh",
         "timeout": 8,
@@ -335,12 +354,12 @@ cloned to:
 }
 ```
 
-The four hooks together give prompt-injection-hardening parity with the
+The five hooks together give prompt-injection-hardening parity with the
 Claude Code adapter — the README's "assistant text excluded from classifier
 input" guarantee holds across both runtimes via different mechanisms.
 
-`failClosed: true` on `beforeShellExecution` because that's the high-stakes
-path. The other three are fail-open (parity with the Claude Code adapter and
+`failClosed: true` on `beforeShellExecution` and `beforeMCPExecution` because
+those are the high-stakes paths. The other three are fail-open (parity with the Claude Code adapter and
 because the prompt-capture/file-zone hooks are auxiliary).
 
 You can also drop this in a project-local `<project>/.cursor/hooks.json` if
@@ -381,20 +400,20 @@ config; one place to maintain the rules for both runtimes.
   protect Cursor's autonomous Tab completion, not Agent flows. Planned for
   a follow-up release; see [`specs/cursor-adapter.md`](./specs/cursor-adapter.md)
   §11.
-- **MCP tool calls not yet classified** — `beforeMCPExecution` is wired up
-  on Cursor's side, but our MCP classifier hasn't shipped yet. Tracked in
-  the README roadmap.
+- **Cloud agents do not fire `beforeMCPExecution`** — Cursor currently exposes
+  that hook for local IDE Agent runs only.
 
 ---
 
 ## Antigravity (agy)
 
 [Antigravity](https://antigravity.dev) (CLI: `agy`) fires a `PreToolUse` hook before
-every tool call. The adapter classifies `run_command` through the same `core/`
+every tool call. The adapter classifies `run_command` and canonical
+`mcp__server__tool` calls through the same `core/`
 classifier as the other runtimes; read-only and agy-internal tools pass straight
 through. The hook reads agy's hook JSON on stdin and emits `{"allowTool": bool}` on
-stdout, exiting 0 on every path (fail-open — a broken classifier never hard-bricks
-the agent).
+stdout, exiting 0 on every path. Existing shell infrastructure failures remain
+fail-open; MCP configuration and classifier failures fail closed.
 
 ### Step 1: Clone, install, build
 
@@ -458,14 +477,15 @@ Hook config is read at session start. Restart `agy`.
 ### Step 5: Verify
 
 Ask the agent to run a benign command (e.g. `ls`); it proceeds (static-allow patterns
-resolve at sub-millisecond before any LLM call). For each classified `run_command`
+resolve at sub-millisecond before any LLM call). For each classified `run_command` or MCP call
 the adapter writes a diagnostic JSON line to **stderr** (`event: classified`, with
 the `decision` + `stage`), so you can confirm it's gating by watching agy's hook
 stderr.
 
 ### Scope + known limitations
 
-- **v1 gates `run_command`** — the shell surface that skip-permissions mode opens up.
+- **v1 gates `run_command` and canonical MCP names** — MCP calls must arrive as
+  `mcp__server__tool`, matching the runtime hook contract.
   File read/write zone classification under agy (as the Claude Code and Cursor
   adapters do via their file hooks) is on the roadmap; until then, file tools pass
   through.
@@ -699,6 +719,11 @@ Run a test command — you should see a log entry with `stage` and `decision`.
 ```bash
 openclaw plugins list  # should appear as static allow at 0ms
 ```
+
+The plugin also classifies OpenClaw bundle MCP tools named
+`<server>__<tool>`. It normalises them to `mcp__server__tool` for shared policy,
+redacts credential-shaped arguments before model and ledger use, and fails
+closed if MCP classification infrastructure is unavailable.
 
 ---
 

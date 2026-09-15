@@ -2,7 +2,7 @@
   "name": "io-auto-mode-openclaw",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenClaw adapter for io-auto-mode — wraps the platform-agnostic classifier in a plugin entry.",
+  "description": "OpenClaw adapter for io-auto-mode — classifies exec and MCP bundle calls in a plugin entry.",
   "type": "module",
   "main": "src/index.ts",
   "openclaw": {

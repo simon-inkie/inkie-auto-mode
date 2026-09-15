@@ -46,6 +46,7 @@
     "adapters/claude-code/prompts/",
     "adapters/claude-code/package.json",
     "adapters/antigravity/dist/",
+    "adapters/antigravity/prompts/",
     "adapters/antigravity/bin/",
     "adapters/antigravity/hooks/",
     "adapters/antigravity/package.json",
@@ -61,6 +62,7 @@
   "scripts": {
     "benchmark": "tsx benchmarks/runner.ts",
     "test": "tsx --test tests/*.test.ts",
+    "test:dist": "node scripts/smoke-built-mcp.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "build": "node scripts/build.mjs",

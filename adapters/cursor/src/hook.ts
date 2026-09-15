@@ -1,8 +1,8 @@
 /**
- * io-auto-mode — Cursor `beforeShellExecution` hook handler.
+ * io-auto-mode — Cursor shell and MCP execution hook handler.
  *
  * Flow:
- *   stdin → Cursor hook event JSON → extract command + cwd + conversation_id
+ *   stdin → Cursor hook event JSON → extract shell command or MCP action
  *     → load cached user prompt for this conversation (if any) for context
  *     → serialise to the core classifier's TranscriptEntry shape
  *     → run classify() — static patterns + Stage 1 (fast LLM) + Stage 2 (thinking)
@@ -40,6 +40,7 @@ for (const envPath of ENV_PATHS) {
 }
 
 import { classify } from "../../../core/classifier.js";
+import { classifyMcpCall } from "../../../core/mcp.js";
 import { serialiseTranscript } from "../../../core/transcript.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
 import { DEFAULT_CONFIG } from "../../../core/types.js";
@@ -52,7 +53,7 @@ import type {
 import { modelCall } from "./model-call.js";
 import { readPrompt } from "./prompt-store.js";
 
-interface CursorBeforeShellExecutionInput {
+interface CursorExecutionInput {
   command?: string;
   cwd?: string;
   sandbox?: boolean;
@@ -62,6 +63,9 @@ interface CursorBeforeShellExecutionInput {
   workspace_roots?: string[];
   user_email?: string | null;
   hook_event_name?: string;
+  tool_name?: string;
+  tool_input?: string;
+  mcp_server_name?: string;
 }
 
 interface CursorPermissionOutput {
@@ -111,8 +115,10 @@ function loadConfig(): ClassifierConfig {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
       return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      // try next candidate
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
+      // Missing optional candidate: try the next path.
     }
   }
   return DEFAULT_CONFIG;
@@ -128,7 +134,8 @@ async function readStdin(): Promise<string> {
 
 function buildMessages(
   conversationId: string | undefined,
-  command: string,
+  action: string,
+  toolName: string,
 ): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
 
@@ -141,12 +148,12 @@ function buildMessages(
     }
   }
 
-  // The command itself, framed as an assistant tool_use block so the
+  // The action itself, framed as an assistant tool_use block so the
   // classifier knows what it's about to run. Mirrors how the Claude Code
   // adapter's transcript reader frames assistant tool_use entries.
   messages.push({
     role: "assistant",
-    content: [{ type: "tool_use", name: "Shell", input: { command } }],
+    content: [{ type: "tool_use", name: toolName, input: action }],
   });
 
   return messages;
@@ -162,19 +169,43 @@ async function main() {
     return failClosed(`failed to read stdin: ${err}`);
   }
 
-  let input: CursorBeforeShellExecutionInput;
+  let input: CursorExecutionInput;
   try {
-    input = JSON.parse(raw) as CursorBeforeShellExecutionInput;
+    input = JSON.parse(raw) as CursorExecutionInput;
   } catch (err) {
     return failClosed(`invalid hook JSON: ${err}`);
   }
 
-  const command = input.command?.trim();
-  if (!command) {
-    return emit({ permission: "allow" });
+  const isMcp = input.hook_event_name === "beforeMCPExecution" || Boolean(input.mcp_server_name);
+  let canonicalMcpName: string | undefined;
+  let mcpInput: Record<string, unknown> | undefined;
+  let action: string;
+
+  if (isMcp) {
+    const server = input.mcp_server_name?.trim();
+    const tool = input.tool_name?.trim();
+    if (!server || !tool) return failClosed("MCP call is missing server or tool identity");
+    canonicalMcpName = `mcp__${server}__${tool}`;
+    try {
+      const parsed: unknown = JSON.parse(input.tool_input ?? "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return failClosed("MCP tool_input is not a JSON object");
+      }
+      mcpInput = parsed as Record<string, unknown>;
+    } catch {
+      return failClosed("MCP tool_input is not valid JSON");
+    }
+    action = canonicalMcpName;
+  } else {
+    action = input.command?.trim() ?? "";
+    if (!action) return emit({ permission: "allow" });
   }
 
-  const messages = buildMessages(input.conversation_id, command);
+  const messages = buildMessages(
+    input.conversation_id,
+    action,
+    canonicalMcpName ?? "Shell",
+  );
   const transcript = serialiseTranscript(messages);
   const config = loadConfig();
 
@@ -187,16 +218,28 @@ async function main() {
 
   let result: ClassifierDecision;
   try {
-    result = await classify(command, transcript, modelCall, config, {
-      isMainSession,
-      source: "direct",
-    });
+    if (canonicalMcpName) {
+      ({ action, result } = await classifyMcpCall({
+        toolName: canonicalMcpName,
+        toolInput: mcpInput,
+        transcript,
+        modelCall,
+        config,
+        isMainSession,
+        source: "direct",
+      }));
+    } else {
+      result = await classify(action, transcript, modelCall, config, {
+        isMainSession,
+        source: "direct",
+      });
+    }
   } catch (err) {
     return failClosed(`classifier threw: ${err}`);
   }
 
   try {
-    logDecision(command, result, "direct", {
+    logDecision(action, result, "direct", {
       adapter: "cursor",
       conversationId: input.conversation_id,
       cursorVersion: input.cursor_version,

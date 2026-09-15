@@ -101,8 +101,7 @@ for (const envPath of ENV_PATHS) {
 
 import { classify } from "../../../core/classifier.js";
 import {
-  evaluateMcpPolicy,
-  formatMcpAction,
+  classifyMcpCall,
   parseMcpToolName,
 } from "../../../core/mcp.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
@@ -126,8 +125,10 @@ function loadConfig(): ClassifierConfig {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
       return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      // try next candidate
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
+      // Missing optional candidate: try the next path.
     }
   }
   return DEFAULT_CONFIG;
@@ -289,16 +290,19 @@ export async function run(
       return denyResponse("MCP classifier configuration unavailable");
     }
 
-    const action = formatMcpAction(mcpIdentity, input.tool_input);
+    let action: string;
     let result: ClassifierDecision;
     try {
-      result = evaluateMcpPolicy(mcpIdentity, config) ?? await classifyFn(
-        action,
-        [],
+      ({ action, result } = await classifyMcpCall({
+        toolName: mcpIdentity.canonicalName,
+        toolInput: input.tool_input,
+        transcript: [],
         modelCall,
         config,
-        { isMainSession: true, source: "direct", actionKind: "mcp" },
-      );
+        isMainSession: true,
+        source: "direct",
+        classifyFn,
+      }));
     } catch (err) {
       warn("infra-error-fail-open", {
         msg: `MCP classify() threw unexpectedly -- failing closed: ${(err as Error).message}`,

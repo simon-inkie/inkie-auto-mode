@@ -9,6 +9,8 @@
 import { test, describe } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { run } from '../adapters/antigravity/src/pretooluse-classify.js';
+import { DEFAULT_CONFIG } from '../core/types.js';
+import type { ClassifierDecision } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -118,6 +120,70 @@ describe('antigravity-classify: unknown tools allow + log', () => {
     const result = await run(JSON.stringify({ conversationId: 'c', workspacePaths: [] }));
     // no toolCall -> toolName="" -> not in ALLOW_TOOLS -> not run_command -> unknown -> allow
     assert.equal(result.allowTool, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Canonical MCP tools -- static/model classification and fail-closed errors
+// ---------------------------------------------------------------------------
+
+describe('antigravity-classify: MCP tools', () => {
+  const decision = (value: ClassifierDecision['decision']) => async () => ({
+    decision: value,
+    stage: 'stage1' as const,
+    durationMs: 1,
+  });
+
+  test('allow maps to allowTool:true; ask and block map to false', async () => {
+    for (const [value, expected] of [['allow', true], ['ask', false], ['block', false]] as const) {
+      const result = await run(makeInput('mcp__github__get_issue', { issue: 42 }), {
+        classifyFn: decision(value),
+        loadConfigFn: () => DEFAULT_CONFIG,
+      });
+      assert.equal(result.allowTool, expected, value);
+      assert.deepEqual(Object.keys(result), ['allowTool']);
+    }
+  });
+
+  test('allow policy bypasses model classification', async () => {
+    let calls = 0;
+    const result = await run(makeInput('mcp__github__get_issue'), {
+      classifyFn: async () => {
+        calls += 1;
+        return { decision: 'block', stage: 'stage1', durationMs: 1 };
+      },
+      loadConfigFn: () => ({
+        ...DEFAULT_CONFIG,
+        mcpAllowPatterns: ['^mcp__github__get_issue$'],
+      }),
+    });
+    assert.equal(result.allowTool, true);
+    assert.equal(calls, 0);
+  });
+
+  test('ledger receives the redacted action and adapter identity', async () => {
+    const calls: unknown[][] = [];
+    await run(makeInput('mcp__github__get_issue', { apiKey: 'secret', issue: 42 }), {
+      classifyFn: decision('allow'),
+      loadConfigFn: () => DEFAULT_CONFIG,
+      logDecisionFn: ((...args: unknown[]) => calls.push(args)) as never,
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(JSON.parse(calls[0][0] as string).arguments.apiKey, '[REDACTED]');
+    assert.deepEqual(calls[0][3], { adapter: 'antigravity' });
+  });
+
+  test('MCP config and classifier failures fail closed', async () => {
+    const configFailure = await run(makeInput('mcp__github__get_issue'), {
+      loadConfigFn: () => { throw new Error('config unavailable'); },
+    });
+    assert.equal(configFailure.allowTool, false);
+
+    const classifierFailure = await run(makeInput('mcp__github__get_issue'), {
+      loadConfigFn: () => DEFAULT_CONFIG,
+      classifyFn: async () => { throw new Error('classifier unavailable'); },
+    });
+    assert.equal(classifierFailure.allowTool, false);
   });
 });
 

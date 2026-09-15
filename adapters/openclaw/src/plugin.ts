@@ -1,5 +1,6 @@
 import { definePluginEntry, type OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import { classify } from '../../../core/classifier.js';
+import { classifyMcpCall, parseOpenClawMcpToolName } from '../../../core/mcp.js';
 import { logDecision } from '../../../core/logger.js';
 import { serialiseTranscript } from '../../../core/transcript.js';
 import type {
@@ -49,7 +50,7 @@ function resolveConfig(pluginConfig?: Record<string, unknown>): ClassifierConfig
 export default definePluginEntry({
   id: 'io-auto-mode',
   name: 'Io Auto Mode',
-  description: 'Hybrid static + LLM exec security classifier.',
+  description: 'Hybrid static + LLM exec and MCP security classifier.',
 
   register(api) {
     // Set log path to absolute workspace location
@@ -143,21 +144,54 @@ export default definePluginEntry({
       sessionTranscripts.delete(event.sessionId ?? ctx.sessionKey ?? '');
     });
 
-    // Intercept exec tool calls
+    // Intercept exec and MCP bundle tool calls. OpenClaw registers bundle MCP
+    // tools as <server>__<tool>; native tools without that separator remain
+    // outside this hook's classification scope.
     api.on('before_tool_call', async (event, ctx) => {
-      if (event.toolName !== 'exec') return;
+      const mcpIdentity = parseOpenClawMcpToolName(event.toolName);
+      if (event.toolName !== 'exec' && !mcpIdentity) return;
 
       const pluginConfig = api.pluginConfig;
       const config = resolveConfig(pluginConfig);
-      const command = event.params.command as string;
-      if (!command) return;
+      const command = event.toolName === 'exec'
+        ? event.params.command as string | undefined
+        : undefined;
+      if (!mcpIdentity && !command) return;
 
       const sessionId = ctx.sessionId ?? ctx.sessionKey ?? 'default';
       const messages = sessionTranscripts.get(sessionId) ?? [];
       const transcript = serialiseTranscript(messages);
 
-      const result = await classify(command, transcript, modelCallFn, config);
-      logDecision(command, result, 'direct');
+      let action: string;
+      let result;
+      try {
+        if (mcpIdentity) {
+          ({ action, result } = await classifyMcpCall({
+            toolName: mcpIdentity.canonicalName,
+            toolInput: event.params,
+            transcript,
+            modelCall: modelCallFn,
+            config,
+            isMainSession: true,
+            source: 'direct',
+          }));
+        } else {
+          action = command as string;
+          result = await classify(action, transcript, modelCallFn, config);
+        }
+      } catch (err) {
+        // MCP calls fail closed: operators may rely on this plugin as the
+        // approval boundary. Preserve the established exec behaviour by
+        // allowing classify() to return its own error-stage decision.
+        if (mcpIdentity) {
+          return {
+            block: true,
+            blockReason: `MCP classifier unavailable: ${(err as Error).message}`,
+          };
+        }
+        throw err;
+      }
+      logDecision(action, result, 'direct', { adapter: 'openclaw' });
 
       switch (result.decision) {
         case 'allow':
@@ -165,13 +199,17 @@ export default definePluginEntry({
         case 'block':
           return {
             block: true,
-            blockReason: `\`${command}\` — ${result.reason ?? `Blocked by io-auto-mode (${result.stage})`}`,
+            blockReason: mcpIdentity
+              ? `${mcpIdentity.canonicalName}: ${result.reason ?? `Blocked by io-auto-mode (${result.stage})`}`
+              : `\`${command}\` — ${result.reason ?? `Blocked by io-auto-mode (${result.stage})`}`,
           };
         case 'ask':
           return {
             requireApproval: {
-              title: 'Exec requires approval',
-              description: `\`${command.slice(0, 100)}${command.length > 100 ? '…' : ''}\`\n${(result.reason ?? 'Classifier flagged this command for review.').slice(0, 140)}`,
+              title: mcpIdentity ? 'MCP tool requires approval' : 'Exec requires approval',
+              description: mcpIdentity
+                ? `${mcpIdentity.canonicalName}\n${(result.reason ?? 'Classifier flagged this MCP call for review.').slice(0, 140)}`
+                : `\`${command!.slice(0, 100)}${command!.length > 100 ? '…' : ''}\`\n${(result.reason ?? 'Classifier flagged this command for review.').slice(0, 140)}`,
               severity: 'warning' as const,
             },
           };

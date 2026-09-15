@@ -3,7 +3,7 @@
 > A hybrid static + LLM exec security classifier for AI coding agents.
 > Stops prompt injection and accidental destruction without making automation impossible.
 
-**Status:** early (`v0.1.0`). OpenClaw, Claude Code, Cursor, Antigravity (agy), and Codex adapters all shipping. Claude Code adapter has been in production use for ~2 weeks; Cursor, agy and Codex adapters are fresh. Tier 1 tests cover static patterns + file-hook zone matching + Cursor schema mappings + agy/Codex classifier mappings (306 tests); full pipeline + transcript tests on the next tier. Looking for feedback from people running agentic dev workflows.
+**Status:** early (`v0.1.0`). OpenClaw, Claude Code, Cursor, Antigravity (agy), and Codex adapters all shipping. Claude Code adapter has been in production use for ~2 weeks; Cursor, agy and Codex adapters are fresh. Tests cover static patterns, file zones, runtime schema mappings, MCP policy/redaction and adapter decisions (340 tests). Looking for feedback from people running agentic dev workflows.
 
 ---
 
@@ -122,8 +122,8 @@ core/                      Shared classifier logic — no platform deps
   transcript.ts            Conversation context extraction
 adapters/
   openclaw/                OpenClaw plugin (reference impl)
-  claude-code/             Claude Code PreToolUse hooks (Bash + file)
-  cursor/                  Cursor hooks (prompt + shell + file + write/edit)
+  claude-code/             Claude Code PreToolUse hooks (Bash + MCP + file)
+  cursor/                  Cursor hooks (prompt + shell + MCP + file + write/edit)
   antigravity/             Antigravity (agy) PreToolUse classifier hook
   codex/                   Codex PreToolUse classifier hook (Bash + apply_patch)
 specs/                     Future-work design specs (AI SDK migration, ...)
@@ -179,14 +179,14 @@ node scripts/build.mjs
 mkdir -p ~/.io-auto-mode
 echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
-# 3. Wire the two PreToolUse hooks into ~/.claude/settings.json
-#    (full snippet in INSTALL.md — Bash matcher + Read|Write|Edit matcher)
+# 3. Wire the three PreToolUse matchers into ~/.claude/settings.json
+#    (full snippet in INSTALL.md — Bash + mcp__.* + Read|Write|Edit)
 
 # 4. Restart your Claude Code session, then watch decisions land
 tail -f ~/.io-auto-mode/auto-mode-log.jsonl
 ```
 
-Two hooks register: a Bash classifier (LLM-backed, fail-closed) and a path-based file classifier (pure regex, sub-millisecond).
+Three matchers register: Bash and MCP calls use the LLM-backed fail-closed classifier; file operations use the path classifier.
 
 ---
 
@@ -205,23 +205,23 @@ node scripts/build.mjs
 mkdir -p ~/.io-auto-mode
 echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
 
-# 3. Wire four hooks into ~/.cursor/hooks.json
+# 3. Wire five hooks into ~/.cursor/hooks.json
 #    (full snippet in INSTALL.md — beforeSubmitPrompt, beforeShellExecution,
-#     beforeReadFile, preToolUse with matcher Edit|Write)
+#     beforeMCPExecution, beforeReadFile, preToolUse with matcher Edit|Write)
 
 # 4. Restart Cursor, then watch decisions land
 tail -f ~/.io-auto-mode/auto-mode-log.jsonl
 ```
 
-Four hooks total: a Bash classifier (`beforeShellExecution`), a file classifier (`beforeReadFile` + `preToolUse` Edit|Write), and a prompt-capture (`beforeSubmitPrompt`) that gives Stage 2 conversation context for prompt-injection hardening -- same guarantee as Claude Code, different mechanism.
+Five hooks total: shell and MCP classifiers, a file classifier, and prompt capture that gives Stage 2 conversation context for prompt-injection hardening.
 
 ---
 
 ## Quick start (Antigravity / agy)
 
-[Antigravity](https://antigravity.dev) (CLI: `agy`) is the non-Anthropic generalist runtime on the team. Its `PreToolUse` hook fires before every tool call; the adapter gates `run_command` through the same three-layer classifier as the Claude Code and Cursor adapters.
+[Antigravity](https://antigravity.dev) (CLI: `agy`) is the non-Anthropic generalist runtime on the team. Its `PreToolUse` hook fires before every tool call; the adapter gates `run_command` and canonical `mcp__server__tool` calls through the shared classifier.
 
-**Contract:** the agy hook adapter reads camelCase JSON on **stdin** and emits `{"allowTool": bool}` on **stdout**, exiting 0 on every path (fail-open). `run_command` calls are classified; read-only tools (`view_file`, `list_dir`, `grep_search`, etc.) are always allowed without a classify call.
+**Contract:** the agy hook adapter reads camelCase JSON on **stdin** and emits `{"allowTool": bool}` on **stdout**, exiting 0 on every path. Shell infrastructure failures remain fail-open; MCP infrastructure failures fail closed. Read-only tools are allowed without classification.
 
 ```bash
 # 1. Clone + install + build the adapter
@@ -268,7 +268,7 @@ Shares the same core classifier, `~/.io-auto-mode/config.json` config, and `~/.i
 
 Exact verdicts come from your `config.json` plus the LLM stage, so they adapt to context rather than a fixed denylist.
 
-**Scope (v1):** the agy adapter gates `run_command` -- the shell surface that skip-permissions mode opens up. File read/write zone classification under agy (as the Claude Code and Cursor adapters do via their file hooks) is on the roadmap; until then, file tools pass through.
+**Scope (v1):** the agy adapter gates `run_command` and canonical MCP calls. File read/write zone classification remains on the roadmap.
 
 ---
 
@@ -387,17 +387,17 @@ Useful both for debugging surprising blocks and for reviewing what your agent ha
 
 ## Status & roadmap
 
-- [x] OpenClaw adapter (Bash classifier, file-tool classifier)
+- [x] OpenClaw adapter (exec + bundle MCP classifier)
 - [x] Per-project config overlays
 - [x] Static-layer hardening (top-level critical-dir rule, mid-path glob matching)
 - [x] Claude Code adapter (PreToolUse hooks; in production ~2 weeks)
-- [x] Cursor adapter (`beforeSubmitPrompt` + `beforeShellExecution` + `beforeReadFile` + `preToolUse`; prompt-injection-hardening parity with Claude Code)
-- [x] Antigravity (agy) adapter (`PreToolUse` matcher:* -- `run_command` classifier, read-only-tool passthrough, fail-open)
+- [x] Cursor adapter (`beforeSubmitPrompt` + shell + MCP + file hooks; prompt-injection-hardening parity with Claude Code)
+- [x] Antigravity (agy) adapter (`PreToolUse` matcher:* -- `run_command` + canonical MCP classifier)
 - [x] Codex adapter (`PreToolUse` matcher:.* -- `Bash` + `apply_patch` + MCP classifier, empty-body-allow contract, fail-open)
-- [x] Tier 1 tests -- static patterns + file-hook zone matching + Cursor schema mappings + agy and Codex classifiers (tsx --test)
+- [x] Tier 1 tests -- static patterns + file zones + runtime schema mappings + MCP policy/redaction (tsx --test)
 - [x] CI -- GitHub Actions running typecheck + tests on every push / PR
 - [ ] Tier 2 tests — full classifier pipeline (mocked LLM) + transcript prompt-injection coverage
-- [x] MCP tool classifier — server/tool-name matching in the Codex adapter
+- [x] MCP tool classifier — shared canonical policy and redaction across all five adapters
 - [ ] AI SDK migration — provider-agnostic model calls ([spec](./specs/ai-sdk-migration.md))
 
 See [`BACKLOG.md`](./BACKLOG.md) for more.

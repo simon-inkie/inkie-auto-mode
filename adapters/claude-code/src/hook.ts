@@ -1,8 +1,8 @@
 /**
- * io-auto-mode — Claude Code PreToolUse hook handler (Bash matcher).
+ * io-auto-mode — Claude Code PreToolUse hook handler (Bash + MCP matchers).
  *
  * Flow:
- *   stdin → hook event JSON → extract Bash command + session info
+ *   stdin → hook event JSON → extract Bash command or MCP action + session info
  *     → read Claude Code transcript tail from disk
  *     → serialise to the core classifier's TranscriptEntry shape
  *     → run classify() — static patterns + Stage 1 (fast LLM) + Stage 2 (thinking)
@@ -40,6 +40,7 @@ for (const envPath of ENV_PATHS) {
 }
 
 import { classify } from "../../../core/classifier.js";
+import { classifyMcpCall, parseMcpToolName } from "../../../core/mcp.js";
 import { serialiseTranscript } from "../../../core/transcript.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
 import { DEFAULT_CONFIG } from "../../../core/types.js";
@@ -57,7 +58,7 @@ interface HookInput {
   cwd?: string;
   hook_event_name?: string;
   tool_name?: string;
-  tool_input?: { command?: string };
+  tool_input?: Record<string, unknown> & { command?: string };
 }
 
 interface HookOutput {
@@ -114,8 +115,10 @@ function loadConfig(): ClassifierConfig {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
       return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      // try next candidate
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
+      // Missing optional candidate: try the next path.
     }
   }
   return DEFAULT_CONFIG;
@@ -148,8 +151,10 @@ async function main() {
     return failClosed(`invalid hook JSON: ${err}`);
   }
 
-  const command = input.tool_input?.command?.trim();
-  if (!command) {
+  const toolName = input.tool_name ?? "";
+  const mcpIdentity = parseMcpToolName(toolName);
+  const shellCommand = input.tool_input?.command?.trim();
+  if (!mcpIdentity && !shellCommand) {
     // No command to classify — safer to allow empty/absent than deny. This
     // shouldn't happen for a matched Bash tool call, but belt-and-braces.
     return emit({
@@ -170,12 +175,26 @@ async function main() {
   const transcript = serialiseTranscript(messages);
   const config = loadConfig();
 
+  let action: string;
   let result: ClassifierDecision;
   try {
-    result = await classify(command, transcript, modelCall, config, {
-      isMainSession: true,
-      source: "direct",
-    });
+    if (mcpIdentity) {
+      ({ action, result } = await classifyMcpCall({
+        toolName: mcpIdentity.canonicalName,
+        toolInput: input.tool_input,
+        transcript,
+        modelCall,
+        config,
+        isMainSession: true,
+        source: "direct",
+      }));
+    } else {
+      action = shellCommand as string;
+      result = await classify(action, transcript, modelCall, config, {
+        isMainSession: true,
+        source: "direct",
+      });
+    }
   } catch (err) {
     return failClosed(`classifier threw: ${err}`);
   }
@@ -185,8 +204,8 @@ async function main() {
   // touched — and the layer fails closed to a no-op. See ./consent.ts.
   if (result.decision === "ask" || result.decision === "block") {
     const upgrade = tryConsentUpgrade({
-      tool: input.tool_name ?? "Bash",
-      command,
+      tool: toolName || "Bash",
+      command: action,
       decision: result.decision,
     });
     if (upgrade) {
@@ -202,7 +221,7 @@ async function main() {
   }
 
   try {
-    logDecision(command, result, "direct", { adapter: "claude-code" });
+    logDecision(action, result, "direct", { adapter: "claude-code" });
   } catch {
     // Log failure is non-fatal; continue with the decision.
   }

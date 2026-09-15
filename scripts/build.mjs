@@ -169,6 +169,9 @@ await build({
   banner: { js: SHEBANG },
 });
 
+// The bundled classifier resolves prompts relative to adapters/antigravity/dist/.
+cpSync(join(ROOT, "prompts"), join(AGY_ROOT, "prompts"), { recursive: true });
+
 makeExecutable(join(AGY_DIST, "pretooluse-classify.js"));
 
 console.log(`[build] agy pretooluse hook   → ${AGY_DIST}/pretooluse-classify.js`);

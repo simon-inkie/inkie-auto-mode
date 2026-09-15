@@ -1,7 +1,7 @@
 {
   "id": "io-auto-mode",
   "name": "Io Auto Mode",
-  "description": "Hybrid static + LLM exec security classifier.",
+  "description": "Hybrid static + LLM exec and MCP security classifier.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
