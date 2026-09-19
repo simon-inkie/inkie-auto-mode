@@ -344,10 +344,10 @@ All options under `plugins.entries.io-auto-mode.config`:
 | Option | Default | Description |
 |---|---|---|
 | `mode` | `classify` | `classify` / `yolo` / `strict` |
-| `stage1Model` | `google/gemini-3.1-flash-lite` | Fast LLM for Stage 1 |
-| `stage1Fallback` | `google/gemini-3.1-flash-lite` | Stage 1 fallback |
-| `stage2Model` | `google/gemini-3.1-flash-lite` | Thinking LLM for Stage 2 |
-| `stage2Fallback` | `google/gemini-3.1-flash-lite` | Stage 2 fallback |
+| `stage1Model` | `google/gemini-3.8-flash` | Fast LLM for Stage 1 |
+| `stage1Fallback` | `google/gemini-3.8-flash` | Stage 1 fallback |
+| `stage2Model` | `google/gemini-3.8-flash` | Thinking LLM for Stage 2 |
+| `stage2Fallback` | `google/gemini-3.8-flash` | Stage 2 fallback |
 | `userAllowPatterns` | `[]` | Extra shell regex patterns always allowed |
 | `userBlockPatterns` | `[]` | Extra shell regex patterns always blocked |
 | `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |
