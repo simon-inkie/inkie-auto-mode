@@ -16,6 +16,11 @@ The first clean-batch attempt on 20 September 2026 stopped after Gemini repeat
 visible output on full classifier inputs. The fail-fast runner wrote no raw
 result file. This attempt is invalid operational evidence only.
 
+The next clean-batch attempt completed two pairs, then stopped after one Gemini
+provider-error fixture in repeat 3. The 20-second request cap was below earlier
+observed valid Stage 2 latency. The fail-fast runner again wrote no raw result
+file; the two completed pairs are exploratory only.
+
 The raw files remain gitignored because they are local fixture-level evidence.
 Only a clean four-pair run with zero provider errors is eligible for the amended
 comparison report.

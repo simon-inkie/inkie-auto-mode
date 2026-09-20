@@ -1,5 +1,10 @@
 # INK-923: Jev versus Gemini Flash variants
 
+> Public, fixture-level evidence for the clean 20 September 2026 runs is in
+> [`ink-923-jev-2026-09-20/`](ink-923-jev-2026-09-20/). It includes an
+> integrity manifest, raw JSON, exact contracts, inclusion rules, and pricing
+> caveats. Invalid exploratory evidence remains separate.
+
 ## Result
 
 Two independent passes of the public 159-fixture corpus completed on 19 September 2026 using the pinned latest GA Gemini benchmark model. This is a benchmark-only comparison: it changes no installed adapter, live route, private configuration, or credential source.
