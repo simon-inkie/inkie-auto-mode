@@ -76,7 +76,14 @@ describe('benchmark provider primitives', () => {
             { thought: true, text: 'internal analysis' },
             { text: 'ALLOW' },
           ] } }],
-          usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 1 },
+          usageMetadata: {
+            promptTokenCount: 9,
+            candidatesTokenCount: 1,
+            thoughtsTokenCount: 3,
+            cachedContentTokenCount: 2,
+            toolUsePromptTokenCount: 4,
+            totalTokenCount: 15,
+          },
         }), { status: 200 });
       }) as typeof fetch,
     });
@@ -94,6 +101,12 @@ describe('benchmark provider primitives', () => {
     assert.equal(observedBudget, STAGE1_MAX_OUTPUT_TOKENS);
     assert.equal(response, 'ALLOW');
     assert.deepEqual(session.snapshot().errors, []);
+    assert.equal(session.snapshot().inputTokens, 9);
+    assert.equal(session.snapshot().outputTokens, 1);
+    assert.equal(session.snapshot().thoughtsTokenCount, 3);
+    assert.equal(session.snapshot().cachedContentTokenCount, 2);
+    assert.equal(session.snapshot().toolUsePromptTokenCount, 4);
+    assert.equal(session.snapshot().totalTokenCount, 15);
   });
 
   test('Gemini chooses thinking semantics from explicit stage, not token budget', async () => {

@@ -12,7 +12,14 @@ export const PROVIDER_TIMEOUT_MS = 30_000;
 
 interface GeminiResponse {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+    toolUsePromptTokenCount?: number;
+    totalTokenCount?: number;
+  };
 }
 
 interface GeminiProviderOptions {
@@ -75,6 +82,10 @@ export function createGeminiProvider(
             );
             metrics.inputTokens += data.usageMetadata?.promptTokenCount ?? 0;
             metrics.outputTokens += data.usageMetadata?.candidatesTokenCount ?? 0;
+            metrics.thoughtsTokenCount = (metrics.thoughtsTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0);
+            metrics.cachedContentTokenCount = (metrics.cachedContentTokenCount ?? 0) + (data.usageMetadata?.cachedContentTokenCount ?? 0);
+            metrics.toolUsePromptTokenCount = (metrics.toolUsePromptTokenCount ?? 0) + (data.usageMetadata?.toolUsePromptTokenCount ?? 0);
+            metrics.totalTokenCount = (metrics.totalTokenCount ?? 0) + (data.usageMetadata?.totalTokenCount ?? 0);
             const visibleText = data.candidates?.[0]?.content?.parts
               ?.filter((part) => part.thought !== true)
               .map((part) => part.text ?? '')

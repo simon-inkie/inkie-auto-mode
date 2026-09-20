@@ -87,6 +87,14 @@ describe('benchmark provider contract', () => {
     assert.equal(createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }).model, GEMINI_FLASH_LITE_MODEL);
     assert.equal(createGeminiProvider(GEMINI_FLASH_LITE_MODEL).model, GEMINI_FLASH_LITE_MODEL);
   });
+  test('benchmark result serializes detailed usage and list-price estimate', async () => {
+    const result = await classifyFixture(geminiProvider([]), dynamicFixture, 1);
+    const roundTrip = JSON.parse(JSON.stringify(result)) as BenchmarkComparisonResult;
+    assert.equal(roundTrip.usage.inputTokens, 22);
+    assert.equal(roundTrip.usage.outputTokens, 2);
+    assert.equal(roundTrip.costEstimateUsd.billableInputTokens, 22);
+    assert.equal(typeof roundTrip.costEstimateUsd.inputCostUsd, 'number');
+  });
   test('Gemini and Jev both traverse stage 1 then stage 2 for a dynamic fixture', async () => {
     const geminiCalls: number[] = [];
     const jevCalls: string[][] = [];
@@ -200,6 +208,7 @@ describe('benchmark provider contract', () => {
       modelCallDurationMs: 0,
       modelCallCount: 0,
       usage: { inputTokens: 0, outputTokens: 0 },
+      costEstimateUsd: { inputCostUsd: null, outputCostUsd: null, totalCostUsd: null, billableInputTokens: 0, billableOutputTokens: 0 },
       answers: [],
     });
     const values = [

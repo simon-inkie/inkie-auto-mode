@@ -2,9 +2,22 @@ import type { ModelCallFn, ModelCallOptions } from '../core/types.js';
 
 export type ProviderName = 'gemini' | 'jev';
 
+export interface ProviderTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  thoughtsTokenCount?: number;
+  cachedContentTokenCount?: number;
+  toolUsePromptTokenCount?: number;
+  totalTokenCount?: number;
+}
+
 export interface ProviderMetrics {
   inputTokens: number;
   outputTokens: number;
+  thoughtsTokenCount?: number;
+  cachedContentTokenCount?: number;
+  toolUsePromptTokenCount?: number;
+  totalTokenCount?: number;
   modelCallDurationMs: number;
   modelCallCount: number;
   confidences: number[];

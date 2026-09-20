@@ -10,7 +10,8 @@ import type { BenchmarkFixture, ClassifierConfig, Decision, ModelCallFn } from '
 import { DEFAULT_CONFIG } from '../core/types.js';
 import { createGeminiProvider, GEMINI_FLASH_LITE_MODEL, GEMINI_MODEL } from './gemini-session.js';
 import { createJevProvider, JEV_MODEL, redactBenchmarkError } from './jev-choice.js';
-import type { ProviderAdapter, ProviderName } from './provider-contract.js';
+import type { ProviderAdapter, ProviderName, ProviderTokenUsage } from './provider-contract.js';
+import { estimateListPriceUsd, PRICING_SNAPSHOT } from './pricing.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, 'fixtures');
@@ -42,7 +43,8 @@ export interface BenchmarkComparisonResult {
   variant?: string;
   answers: Array<{ choice: string; probabilities: Record<string, number>; confidence: number; stage: string }>;
   confidence?: number;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: ProviderTokenUsage;
+  costEstimateUsd: ReturnType<typeof estimateListPriceUsd>;
 }
 
 export function parseOnly(value: string): Args['only'] {
@@ -173,7 +175,22 @@ export async function classifyFixture(
     confidence: metrics.confidences.length > 0
       ? metrics.confidences.reduce((sum, value) => sum + value, 0) / metrics.confidences.length
       : undefined,
-    usage: { inputTokens: metrics.inputTokens, outputTokens: metrics.outputTokens },
+    usage: {
+      inputTokens: metrics.inputTokens,
+      outputTokens: metrics.outputTokens,
+      thoughtsTokenCount: metrics.thoughtsTokenCount,
+      cachedContentTokenCount: metrics.cachedContentTokenCount,
+      toolUsePromptTokenCount: metrics.toolUsePromptTokenCount,
+      totalTokenCount: metrics.totalTokenCount,
+    },
+    costEstimateUsd: estimateListPriceUsd(provider.provider, provider.model, {
+      inputTokens: metrics.inputTokens,
+      outputTokens: metrics.outputTokens,
+      thoughtsTokenCount: metrics.thoughtsTokenCount,
+      cachedContentTokenCount: metrics.cachedContentTokenCount,
+      toolUsePromptTokenCount: metrics.toolUsePromptTokenCount,
+      totalTokenCount: metrics.totalTokenCount,
+    }),
   };
 }
 
@@ -244,6 +261,7 @@ async function main(): Promise<void> {
       promptSha256: { sharedClassifierSystem: hash(readFileSync(resolve(__dirname, '..', 'prompts', 'system.txt'))) },
       repeats: args.repeats,
       providerContract: 'shared-full-two-stage-classifier',
+      pricingSnapshot: PRICING_SNAPSHOT,
       temperatureSemantics: {
         gemini: 'generation-control',
         jev: 'serialised-in-state-only; not a generation control',
