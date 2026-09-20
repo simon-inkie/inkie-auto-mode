@@ -12,6 +12,7 @@ import {
   createRequestTimeout,
   emptyProviderMetrics,
   redactProviderError,
+  runWithProviderDeadline,
   type ProviderAdapter,
 } from './provider-contract.js';
 
@@ -97,14 +98,17 @@ export function createJevProvider(
           const timeout = createRequestTimeout(PROVIDER_TIMEOUT_MS);
           try {
             client ??= clientProvider();
-            const response = await client.systemOne({
-              state: stateFor(options),
-              questions: { decision: questionFor(options, variant) },
-              model: JEV_MODEL,
-            }, {
-              signal: timeout.signal,
-              retry: { maxRetries: 0 },
-            });
+            const response = await runWithProviderDeadline(
+              signal => client!.systemOne({
+                state: stateFor(options),
+                questions: { decision: questionFor(options, variant) },
+                model: JEV_MODEL,
+              }, {
+                signal,
+                retry: { maxRetries: 0 },
+              }),
+              timeout,
+            );
             metrics.inputTokens += response.usage.input_tokens;
             metrics.outputTokens += response.usage.output_tokens;
             metrics.confidences.push(response.answers.decision.confidence);

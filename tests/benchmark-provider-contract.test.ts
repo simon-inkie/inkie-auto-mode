@@ -9,7 +9,7 @@ import {
 } from '../benchmarks/compare-jev.js';
 import { createGeminiProvider, GEMINI_FLASH_LITE_MODEL } from '../benchmarks/gemini-session.js';
 import { createJevProvider, type JevSystemOneClient } from '../benchmarks/jev-choice.js';
-import type { ProviderAdapter } from '../benchmarks/provider-contract.js';
+import { createRequestTimeout, runWithProviderDeadline, type ProviderAdapter } from '../benchmarks/provider-contract.js';
 import { STAGE1_MAX_OUTPUT_TOKENS, STAGE2_MAX_OUTPUT_TOKENS } from '../core/classifier.js';
 import type { BenchmarkFixture, ModelCallOptions } from '../core/types.js';
 
@@ -154,6 +154,28 @@ describe('benchmark provider contract', () => {
     assert.equal(result.expectedBlockMiss, null);
     assert.equal(result.providerError?.count, 4);
     assert.equal(result.modelCallCount, 4);
+  });
+
+  test('benchmark worker turns a hard provider deadline into provider-error', async () => {
+    const provider: ProviderAdapter = {
+      provider: 'gemini', model: 'test-model',
+      createSession() {
+        const metrics = { inputTokens: 0, outputTokens: 0, modelCallDurationMs: 0, modelCallCount: 0, confidences: [], errors: [] as string[], answers: [] };
+        return {
+          async call() {
+            metrics.modelCallCount += 1;
+            const timeout = createRequestTimeout(10);
+            try { return await runWithProviderDeadline(async () => new Promise<string>(() => {}), timeout); }
+            catch (error) { metrics.errors.push(error instanceof Error ? error.message : 'provider timeout'); throw error; }
+          },
+          snapshot: () => ({ ...metrics, confidences: [], errors: [...metrics.errors], answers: [] }),
+        };
+      },
+    };
+    const result = await classifyFixture(provider, dynamicFixture, 1);
+    assert.equal(result.actual, null);
+    assert.equal(result.providerError?.count, 4);
+    assert.match(result.providerError?.messages[0] ?? '', /timed out/);
   });
 
   test('sorts output by repeat, paired provider order, then fixture ID', () => {

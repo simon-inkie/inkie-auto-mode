@@ -2,6 +2,7 @@ import {
   createRequestTimeout,
   emptyProviderMetrics,
   redactProviderError,
+  runWithProviderDeadline,
   type ProviderAdapter,
 } from './provider-contract.js';
 
@@ -18,6 +19,7 @@ interface GeminiProviderOptions {
   model?: string;
   apiKey?: () => string | undefined;
   fetch?: typeof fetch;
+  timeoutMs?: number;
 }
 
 /** Small benchmark-only Gemini adapter. It does not change an installed route. */
@@ -29,6 +31,7 @@ export function createGeminiProvider(
     || process.env.GEMINI_API_KEY
     || process.env.GOOGLE_API_KEY);
   const fetchImpl = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? PROVIDER_TIMEOUT_MS;
 
   return {
     provider: 'gemini',
@@ -39,32 +42,37 @@ export function createGeminiProvider(
         async call({ stage, model, system, messages, maxTokens, temperature }) {
           const started = performance.now();
           metrics.modelCallCount += 1;
-          const timeout = createRequestTimeout(PROVIDER_TIMEOUT_MS);
+          const timeout = createRequestTimeout(timeoutMs);
           try {
             const apiKey = credential();
             if (!apiKey) throw new Error('No Google Gemini API credential is available');
             const modelId = model.replace(/^(google|gemini)\//, '');
-            const response = await fetchImpl(
-              `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal: timeout.signal,
-                body: JSON.stringify({
-                  systemInstruction: { parts: [{ text: system }] },
-                  contents: messages.map((message) => ({ role: 'user', parts: [{ text: message.content }] })),
-                  generationConfig: {
-                    maxOutputTokens: maxTokens,
-                    temperature,
-                    ...(stage === 'stage1'
-                      ? { thinkingConfig: { thinkingLevel: 'low' } }
-                      : {}),
-                  },
-                }),
+            const data = await runWithProviderDeadline(
+              async signal => {
+                const response = await fetchImpl(
+                `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  signal,
+                  body: JSON.stringify({
+                    systemInstruction: { parts: [{ text: system }] },
+                    contents: messages.map((message) => ({ role: 'user', parts: [{ text: message.content }] })),
+                    generationConfig: {
+                      maxOutputTokens: maxTokens,
+                      temperature,
+                      ...(stage === 'stage1'
+                        ? { thinkingConfig: { thinkingLevel: 'low' } }
+                        : {}),
+                    },
+                  }),
+                },
+                );
+                if (!response.ok) throw new Error(`Gemini API error ${response.status}`);
+                return response.json() as Promise<GeminiResponse>;
               },
+              timeout,
             );
-            if (!response.ok) throw new Error(`Gemini API error ${response.status}`);
-            const data = await response.json() as GeminiResponse;
             metrics.inputTokens += data.usageMetadata?.promptTokenCount ?? 0;
             metrics.outputTokens += data.usageMetadata?.candidatesTokenCount ?? 0;
             const visibleText = data.candidates?.[0]?.content?.parts
@@ -76,7 +84,7 @@ export function createGeminiProvider(
             return visibleText;
           } catch (error) {
             const normalised = timeout.didTimeout()
-              ? `Provider request timed out after ${PROVIDER_TIMEOUT_MS}ms`
+              ? `Provider request timed out after ${timeoutMs}ms`
               : redactProviderError(error);
             metrics.errors.push(normalised);
             throw new Error(normalised);

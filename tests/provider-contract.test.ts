@@ -1,11 +1,11 @@
 import { describe, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { createGeminiProvider } from '../benchmarks/gemini-session.js';
-import { createRequestTimeout, redactProviderError } from '../benchmarks/provider-contract.js';
+import { createRequestTimeout, redactProviderError, runWithProviderDeadline } from '../benchmarks/provider-contract.js';
 import { STAGE1_MAX_OUTPUT_TOKENS } from '../core/classifier.js';
 
 describe('benchmark provider primitives', () => {
-  test('timeout timer is unrefed, aborts the request, and is cleared', () => {
+  test('timeout timer aborts the request and is cleared', () => {
     let callback: (() => void) | undefined;
     let unrefCount = 0;
     let clearCount = 0;
@@ -22,7 +22,7 @@ describe('benchmark provider primitives', () => {
       },
     });
 
-    assert.equal(unrefCount, 1);
+    assert.equal(unrefCount, 0);
     assert.equal(timeout.signal.aborted, false);
     assert.ok(callback);
     callback();
@@ -30,6 +30,32 @@ describe('benchmark provider primitives', () => {
     assert.equal(timeout.didTimeout(), true);
     timeout.clear();
     assert.equal(clearCount, 1);
+  });
+
+  test('hard deadline rejects a fetch that ignores abort', async () => {
+    const timeout = createRequestTimeout(10);
+    await assert.rejects(runWithProviderDeadline(async () => new Promise<Response>(() => {}), timeout), /timed out/);
+    assert.equal(timeout.didTimeout(), true);
+  });
+
+  test('hard deadline rejects a response body parse that hangs', async () => {
+    const timeout = createRequestTimeout(10);
+    await assert.rejects(runWithProviderDeadline(async () => ({
+      json: async () => new Promise<never>(() => {}),
+    }).json(), timeout), /timed out/);
+  });
+
+  test('abort-aware provider operation can complete before the deadline', async () => {
+    const timeout = createRequestTimeout(100);
+    const result = await runWithProviderDeadline(async signal => {
+      await new Promise<void>((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        setTimeout(resolve, 1);
+      });
+      return 'ok';
+    }, timeout);
+    assert.equal(result, 'ok');
+    assert.equal(timeout.didTimeout(), false);
   });
 
   test('Gemini applies the explicit Stage 1 budget and returns visible text after thought parts', async () => {
@@ -110,6 +136,20 @@ describe('benchmark provider primitives', () => {
       temperature: 0,
     }), /no visible text/);
     assert.deepEqual(session.snapshot().errors, ['Gemini returned no visible text']);
+  });
+
+  test('Gemini turns a hanging response body into a timed provider error', async () => {
+    const provider = createGeminiProvider({
+      apiKey: () => 'test-key',
+      timeoutMs: 10,
+      fetch: (async () => ({ ok: true, json: async () => new Promise<never>(() => {}) })) as typeof fetch,
+    });
+    const session = provider.createSession();
+    await assert.rejects(session.call({
+      stage: 'stage1', model: provider.model, system: 'Classify', messages: [],
+      maxTokens: STAGE1_MAX_OUTPUT_TOKENS, temperature: 0,
+    }), /timed out/);
+    assert.deepEqual(session.snapshot().errors, ['Provider request timed out after 10ms']);
   });
 
   test('normalises credential-bearing errors', () => {
