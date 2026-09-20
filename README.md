@@ -113,6 +113,12 @@ Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one shor
 
 ---
 
+## Benchmark evidence
+
+The [INK-923 benchmark](./docs/benchmarks/ink-923-jev-vs-gemini.md) compares Jev with pinned Gemini variants on fixture data; the [raw evidence bundle](./docs/benchmarks/ink-923-jev-2026-09-20/) includes the methodology and results. It is benchmark-only evidence, not a live provider switch.
+
+---
+
 ## What's in the repo
 
 ```

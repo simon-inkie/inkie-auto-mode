@@ -81,7 +81,12 @@ describe('benchmark provider contract', () => {
     assert.equal(parseOnly('gemini-flash-lite'), 'gemini-flash-lite');
     assert.equal(parseOnly('jev-c'), 'jev-c');
     assert.equal(parseOnly('jev-thresholded-a'), 'jev-thresholded-a');
-    assert.deepEqual(parseArgs(['--only', 'jev']), { repeats: 2, concurrency: 4, baseline: 'unknown', only: 'jev' });
+    assert.deepEqual(parseArgs(['--only', 'jev']), {
+      repeats: 2,
+      concurrency: 4,
+      baseline: process.env.GITHUB_SHA ?? 'unknown',
+      only: 'jev',
+    });
     assert.throws(() => parseOnly('gemini'), /--only must be one of/);
   });
   test('thresholded A result identifies its prompt, policy, and thresholds', async () => {
