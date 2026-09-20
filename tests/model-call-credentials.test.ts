@@ -63,6 +63,7 @@ function setEnv(vars: Partial<Record<(typeof KEY_VARS)[number], string | undefin
 }
 
 const OPTS = {
+  stage: "stage1" as const,
   model: "google/gemini-3.1-flash-lite",
   system: "s",
   messages: [{ role: "user" as const, content: "c" }],

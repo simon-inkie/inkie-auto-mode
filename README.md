@@ -113,6 +113,12 @@ Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one shor
 
 ---
 
+## Benchmark evidence
+
+The [INK-923 benchmark](./docs/benchmarks/ink-923-jev-vs-gemini.md) compares Jev with pinned Gemini variants on fixture data; the [raw evidence bundle](./docs/benchmarks/ink-923-jev-2026-09-20/) includes the methodology and results. It is benchmark-only evidence, not a live provider switch.
+
+---
+
 ## What's in the repo
 
 ```
@@ -344,10 +350,10 @@ All options under `plugins.entries.io-auto-mode.config`:
 | Option | Default | Description |
 |---|---|---|
 | `mode` | `classify` | `classify` / `yolo` / `strict` |
-| `stage1Model` | `google/gemini-3.1-flash-lite` | Fast LLM for Stage 1 |
-| `stage1Fallback` | `google/gemini-3.1-flash-lite` | Stage 1 fallback |
-| `stage2Model` | `google/gemini-3.1-flash-lite` | Thinking LLM for Stage 2 |
-| `stage2Fallback` | `google/gemini-3.1-flash-lite` | Stage 2 fallback |
+| `stage1Model` | `google/gemini-3.8-flash` | Fast LLM for Stage 1 |
+| `stage1Fallback` | `google/gemini-3.8-flash` | Stage 1 fallback |
+| `stage2Model` | `google/gemini-3.8-flash` | Thinking LLM for Stage 2 |
+| `stage2Fallback` | `google/gemini-3.8-flash` | Stage 2 fallback |
 | `userAllowPatterns` | `[]` | Extra shell regex patterns always allowed |
 | `userBlockPatterns` | `[]` | Extra shell regex patterns always blocked |
 | `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |

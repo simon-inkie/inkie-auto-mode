@@ -50,10 +50,10 @@ export interface ClassifierConfig {
 
 /** Default configuration */
 export const DEFAULT_CONFIG: ClassifierConfig = {
-  stage1Model: 'google/gemini-3.1-flash-lite',
-  stage1Fallback: 'google/gemini-3.1-flash-lite',
-  stage2Model: 'google/gemini-3.1-flash-lite',
-  stage2Fallback: 'google/gemini-3.1-flash-lite',
+  stage1Model: 'google/gemini-3.8-flash',
+  stage1Fallback: 'google/gemini-3.8-flash',
+  stage2Model: 'google/gemini-3.8-flash',
+  stage2Fallback: 'google/gemini-3.8-flash',
   mode: 'classify',
   nonMainMode: 'block',
   userAllowPatterns: [],
@@ -64,6 +64,8 @@ export const DEFAULT_CONFIG: ClassifierConfig = {
 
 /** Provider-agnostic model call interface */
 export interface ModelCallOptions {
+  /** Classifier stage making this call. */
+  stage: 'stage1' | 'stage2';
   model: string;
   system: string;
   messages: Array<{ role: 'user'; content: string }>;

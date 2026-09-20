@@ -57,6 +57,7 @@ describe('static-patterns: dangerous commands BLOCK', () => {
   }
 });
 
+
 describe('static-patterns: safe commands ALLOW', () => {
   const allowCases: string[] = [
     'ls',
