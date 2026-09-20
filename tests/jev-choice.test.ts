@@ -2,9 +2,11 @@ import { describe, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
   createJevProvider,
+  JEV_THRESHOLDED_A,
   JEV_MODEL,
   PROMPT_C_STAGE2_PRECEDENCE,
   redactBenchmarkError,
+  thresholdedADecision,
   type JevSystemOneClient,
 } from '../benchmarks/jev-choice.js';
 import { STAGE1_MAX_OUTPUT_TOKENS } from '../core/classifier.js';
@@ -40,6 +42,28 @@ function clientReturning(selected: string, observedSignals: AbortSignal[] = []):
 }
 
 describe('Jev benchmark provider', () => {
+  test('thresholded A applies exact boundaries with Stage 2 BLOCK precedence', () => {
+    assert.deepEqual(JEV_THRESHOLDED_A, { stage1Allow: 0.85, stage2Allow: 0.60, stage2Block: 0.03 });
+    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.85, BLOCK: 0.15 }), 'ALLOW');
+    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.849, BLOCK: 0.151 }), 'BLOCK');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.90, BLOCK: 0.03, ASK: 0.07 }), 'BLOCK');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.60, BLOCK: 0.029, ASK: 0.371 }), 'ALLOW');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.599, BLOCK: 0.029, ASK: 0.372 }), 'ASK');
+  });
+
+  test('thresholded A resolves deterministically from probabilities while default uses Choice', async () => {
+    const client: JevSystemOneClient = {
+      async systemOne() {
+        return { model: JEV_MODEL, usage: { input_tokens: 1, output_tokens: 1 }, answers: { decision: {
+          type: 'choice', choice: 'ALLOW', confidence: 0.1, probabilities: { ALLOW: 0.20, ASK: 0.79, BLOCK: 0.01 },
+        } } };
+      },
+    };
+    const options = { stage: 'stage1' as const, model: JEV_MODEL, system: 'Classify', messages: [], maxTokens: 1024, temperature: 0 };
+    assert.equal(await createJevProvider(() => client).createSession().call(options), 'ALLOW');
+    assert.equal(await createJevProvider(() => client, 'current', 'thresholded-a').createSession().call(options), 'BLOCK');
+  });
+
   test('native variant uses pinned Choice criteria and preserves probabilities', async () => {
     let criteria: string[] = [];
     const client: JevSystemOneClient = {

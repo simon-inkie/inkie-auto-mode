@@ -34,6 +34,8 @@ export interface ProviderAdapter {
   provider: ProviderName;
   model: string;
   variant?: string;
+  decisionPolicy?: string;
+  thresholds?: Readonly<Record<string, number>>;
   createSession(): ProviderSession;
 }
 

@@ -21,7 +21,7 @@ interface Args {
   repeats: number;
   concurrency: number;
   baseline: string;
-  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | null;
+  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | 'jev-thresholded-a' | null;
 }
 
 export interface BenchmarkComparisonResult {
@@ -41,6 +41,8 @@ export interface BenchmarkComparisonResult {
   modelCallCount: number;
   model?: string;
   variant?: string;
+  decisionPolicy?: string;
+  thresholds?: Readonly<Record<string, number>>;
   answers: Array<{ choice: string; probabilities: Record<string, number>; confidence: number; stage: string }>;
   confidence?: number;
   usage: ProviderTokenUsage;
@@ -48,8 +50,8 @@ export interface BenchmarkComparisonResult {
 }
 
 export function parseOnly(value: string): Args['only'] {
-  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c') return value;
-  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c (received ${value})`);
+  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c' || value === 'jev-thresholded-a') return value;
+  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c, jev-thresholded-a (received ${value})`);
 }
 
 export function parseArgs(values = process.argv.slice(2)): Args {
@@ -64,7 +66,7 @@ export function parseArgs(values = process.argv.slice(2)): Args {
       case '--baseline': baseline = values[++index] ?? baseline; break;
       case '--only': only = parseOnly(values[++index] ?? ''); break;
       case '--help':
-        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
+        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c|jev-thresholded-a] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
         process.exit(0);
     }
   }
@@ -171,6 +173,8 @@ export async function classifyFixture(
     modelCallCount: metrics.modelCallCount,
     model: provider.model,
     variant: provider.variant,
+    decisionPolicy: provider.decisionPolicy,
+    thresholds: provider.thresholds,
     answers: metrics.answers,
     confidence: metrics.confidences.length > 0
       ? metrics.confidences.reduce((sum, value) => sum + value, 0) / metrics.confidences.length
@@ -219,11 +223,13 @@ async function main(): Promise<void> {
     createJevProvider(),
     createJevProvider(undefined, 'native'),
     createJevProvider(undefined, 'c'),
+    createJevProvider(undefined, 'current', 'thresholded-a'),
   ];
   const providers = args.only === null ? allProviders.slice(0, 3) : allProviders.filter((provider) =>
-    args.only === 'jev-ab' ? provider.provider === 'jev' && provider.variant !== 'c' :
-    args.only === 'jev-c' ? provider.provider === 'jev' && provider.variant === 'c' :
-      args.only === 'jev' ? provider.provider === 'jev' && provider.variant === 'current' :
+    args.only === 'jev-ab' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant !== 'c' :
+    args.only === 'jev-c' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant === 'c' :
+      args.only === 'jev' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant === 'current' :
+      args.only === 'jev-thresholded-a' ? provider.provider === 'jev' && provider.decisionPolicy === 'thresholded-a' :
       args.only === 'gemini-flash' ? provider.model === GEMINI_MODEL :
         provider.model === GEMINI_FLASH_LITE_MODEL);
   const results: BenchmarkComparisonResult[] = [];
@@ -257,7 +263,14 @@ async function main(): Promise<void> {
       publicBaseline: args.baseline,
       fixtureCount: fixtures.length,
       fixtureSha256: fixtureHash,
-      models: providers.map(({ provider, model, variant }) => ({ provider, model, variant: variant ?? 'default' })),
+      models: providers.map(({ provider, model, variant, decisionPolicy, thresholds }) => ({
+        provider,
+        model,
+        variant: variant ?? 'default',
+        promptVariant: variant ?? 'default',
+        decisionPolicy: decisionPolicy ?? 'provider-choice',
+        thresholds: thresholds ?? null,
+      })),
       promptSha256: { sharedClassifierSystem: hash(readFileSync(resolve(__dirname, '..', 'prompts', 'system.txt'))) },
       repeats: args.repeats,
       providerContract: 'shared-full-two-stage-classifier',

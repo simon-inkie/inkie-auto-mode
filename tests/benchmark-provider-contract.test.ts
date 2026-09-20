@@ -80,8 +80,27 @@ describe('benchmark provider contract', () => {
   test('validates explicit benchmark provider selection', () => {
     assert.equal(parseOnly('gemini-flash-lite'), 'gemini-flash-lite');
     assert.equal(parseOnly('jev-c'), 'jev-c');
+    assert.equal(parseOnly('jev-thresholded-a'), 'jev-thresholded-a');
     assert.deepEqual(parseArgs(['--only', 'jev']), { repeats: 2, concurrency: 4, baseline: 'unknown', only: 'jev' });
     assert.throws(() => parseOnly('gemini'), /--only must be one of/);
+  });
+  test('thresholded A result identifies its prompt, policy, and thresholds', async () => {
+    const provider = createJevProvider(() => ({
+      async systemOne(request) {
+        const stage1 = Object.keys(request.questions.decision.criteria).length === 2;
+        return { model: 'jev-test', usage: { input_tokens: 1, output_tokens: 1 }, answers: { decision: {
+          type: 'choice',
+          choice: stage1 ? 'ALLOW' : 'ASK',
+          confidence: 0.5,
+          probabilities: stage1 ? { ALLOW: 0.20, BLOCK: 0.80 } : { ALLOW: 0.60, ASK: 0.39, BLOCK: 0.01 },
+        } } };
+      },
+    }), 'current', 'thresholded-a');
+    const result = await classifyFixture(provider, dynamicFixture, 1);
+    assert.equal(result.actual, 'allow');
+    assert.equal(result.variant, 'current');
+    assert.equal(result.decisionPolicy, 'thresholded-a');
+    assert.deepEqual(result.thresholds, { stage1Allow: 0.85, stage2Allow: 0.60, stage2Block: 0.03 });
   });
   test('Gemini provider accepts an explicit pinned model', () => {
     assert.equal(createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }).model, GEMINI_FLASH_LITE_MODEL);
