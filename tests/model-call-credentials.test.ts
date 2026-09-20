@@ -65,7 +65,8 @@ function assertGeminiAuth(
 ): void {
   assert.equal(captured.requests.length, 1);
   assert.equal(captured.requests[0]!.headers.get("x-goog-api-key"), expectedKey);
-  assert.doesNotMatch(captured.requests[0]!.url, /[?&]key=/);
+  assert.equal(new URL(captured.requests[0]!.url).search, "");
+  assert.ok(!captured.requests[0]!.url.includes(expectedKey));
 }
 
 function setEnv(vars: Partial<Record<(typeof KEY_VARS)[number], string | undefined>>): void {
