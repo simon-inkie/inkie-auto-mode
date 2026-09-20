@@ -57,10 +57,13 @@ export function createGeminiProvider(
             const data = await runWithProviderDeadline(
               async signal => {
                 const response = await fetchImpl(
-                `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`,
                 {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey,
+                  },
                   signal,
                   body: JSON.stringify({
                     systemInstruction: { parts: [{ text: system }] },

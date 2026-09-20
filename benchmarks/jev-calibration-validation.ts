@@ -11,7 +11,7 @@ import { createJevProvider, JEV_MODEL } from './jev-choice.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(ROOT, 'fixtures');
-const OUT = '/home/simon/brain/projects/fleet-azure-migration-2026-09/jev-benchmark';
+const OUT = resolve(process.env.JEV_VALIDATION_OUTPUT_DIR || resolve(ROOT, 'results', 'jev-calibration-validation'));
 const RUN_STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const REPEATS = 4;
 const CONCURRENCY = 2;

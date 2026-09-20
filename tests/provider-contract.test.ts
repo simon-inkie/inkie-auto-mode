@@ -62,7 +62,11 @@ describe('benchmark provider primitives', () => {
     let observedBudget = 0;
     const provider = createGeminiProvider({
       apiKey: () => 'test-key',
-      fetch: (async (_input, init) => {
+      fetch: (async (input, init) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get('x-goog-api-key'), 'test-key');
+        assert.doesNotMatch(url, /test-key|[?&]key=/);
         const body = JSON.parse(String(init?.body)) as {
           generationConfig: {
             maxOutputTokens: number;
