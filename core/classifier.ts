@@ -67,14 +67,14 @@ export async function classify(
     }
     // In strict mode, only static allows pass
     const staticResult = evaluateStatic(command);
-    if (staticResult?.decision === 'allow') return staticResult;
-    return { decision: 'block', stage: 'static', durationMs: 0, reason: 'Strict mode — not on explicit allowlist' };
+    if (staticResult?.decision === 'block' || (staticResult?.decision === 'allow' && source !== 'external')) return staticResult;
+    if (staticResult === null || source !== 'external') return { decision: 'block', stage: 'static', durationMs: 0, reason: 'Strict mode — not on explicit allowlist' };
   }
 
   // Layer 0: Static patterns
   if (actionKind === 'shell') {
     const staticResult = evaluateStatic(command);
-    if (staticResult !== null) {
+    if (staticResult?.decision === 'block' || (staticResult?.decision === 'allow' && source !== 'external')) {
       return staticResult;
     }
   }

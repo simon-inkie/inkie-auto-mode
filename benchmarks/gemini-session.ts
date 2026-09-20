@@ -6,7 +6,8 @@ import {
 } from './provider-contract.js';
 
 export const GEMINI_MODEL = 'google/gemini-3.8-flash';
-export const PROVIDER_TIMEOUT_MS = 20_000;
+export const GEMINI_FLASH_LITE_MODEL = 'google/gemini-3.5-flash-lite';
+export const PROVIDER_TIMEOUT_MS = 30_000;
 
 interface GeminiResponse {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
@@ -14,12 +15,16 @@ interface GeminiResponse {
 }
 
 interface GeminiProviderOptions {
+  model?: string;
   apiKey?: () => string | undefined;
   fetch?: typeof fetch;
 }
 
 /** Small benchmark-only Gemini adapter. It does not change an installed route. */
-export function createGeminiProvider(options: GeminiProviderOptions = {}): ProviderAdapter {
+export function createGeminiProvider(
+  modelOrOptions: string | GeminiProviderOptions = {},
+): ProviderAdapter {
+  const options = typeof modelOrOptions === 'string' ? { model: modelOrOptions } : modelOrOptions;
   const credential = options.apiKey ?? (() => process.env.GOOGLE_GENERATIVE_AI_API_KEY
     || process.env.GEMINI_API_KEY
     || process.env.GOOGLE_API_KEY);
@@ -27,7 +32,7 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Provi
 
   return {
     provider: 'gemini',
-    model: GEMINI_MODEL,
+    model: options.model ?? GEMINI_MODEL,
     createSession() {
       const metrics = emptyProviderMetrics();
       return {
@@ -80,7 +85,7 @@ export function createGeminiProvider(options: GeminiProviderOptions = {}): Provi
             metrics.modelCallDurationMs += Math.round(performance.now() - started);
           }
         },
-        snapshot: () => ({ ...metrics, confidences: [...metrics.confidences], errors: [...metrics.errors] }),
+        snapshot: () => ({ ...metrics, confidences: [...metrics.confidences], errors: [...metrics.errors], answers: [...metrics.answers] }),
       };
     },
   };

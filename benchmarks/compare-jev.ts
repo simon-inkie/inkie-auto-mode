@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { classify } from '../core/classifier.js';
 import type { BenchmarkFixture, ClassifierConfig, Decision, ModelCallFn } from '../core/types.js';
 import { DEFAULT_CONFIG } from '../core/types.js';
-import { createGeminiProvider, GEMINI_MODEL } from './gemini-session.js';
+import { createGeminiProvider, GEMINI_FLASH_LITE_MODEL, GEMINI_MODEL } from './gemini-session.js';
 import { createJevProvider, JEV_MODEL, redactBenchmarkError } from './jev-choice.js';
 import type { ProviderAdapter, ProviderName } from './provider-contract.js';
 
@@ -20,6 +20,7 @@ interface Args {
   repeats: number;
   concurrency: number;
   baseline: string;
+  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | null;
 }
 
 export interface BenchmarkComparisonResult {
@@ -38,28 +39,36 @@ export interface BenchmarkComparisonResult {
   modelCallDurationMs: number;
   modelCallCount: number;
   model?: string;
+  variant?: string;
+  answers: Array<{ choice: string; probabilities: Record<string, number>; confidence: number; stage: string }>;
   confidence?: number;
   usage: { inputTokens: number; outputTokens: number };
 }
 
-function parseArgs(): Args {
+export function parseOnly(value: string): Args['only'] {
+  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab') return value;
+  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab (received ${value})`);
+}
+
+export function parseArgs(values = process.argv.slice(2)): Args {
   let repeats = 2;
   let concurrency = 4;
   let baseline = process.env.GITHUB_SHA ?? 'unknown';
-  const values = process.argv.slice(2);
+  let only: Args['only'] = null;
   for (let index = 0; index < values.length; index += 1) {
     switch (values[index]) {
       case '--repeats': repeats = Number(values[++index]); break;
       case '--concurrency': concurrency = Number(values[++index]); break;
       case '--baseline': baseline = values[++index] ?? baseline; break;
+      case '--only': only = parseOnly(values[++index] ?? ''); break;
       case '--help':
-        console.log('Usage: pnpm benchmark:jev -- [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
+        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
         process.exit(0);
     }
   }
   if (!Number.isInteger(repeats) || repeats < 2) throw new Error('--repeats must be an integer of at least 2');
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('--concurrency must be a positive integer');
-  return { repeats, concurrency, baseline };
+  return { repeats, concurrency, baseline, only };
 }
 
 function hash(value: string | Buffer): string {
@@ -80,13 +89,30 @@ function passed(expected: Decision, actual: Decision): boolean {
   return expected === 'ask' ? actual === 'ask' || actual === 'block' : expected === actual;
 }
 
+function providerErrorKind(message: string): string {
+  if (/timed out/i.test(message)) return 'timeout';
+  if (/no visible text/i.test(message)) return 'empty-visible-output';
+  const httpStatus = message.match(/API error (\d{3})/i)?.[1];
+  if (httpStatus) return `http-${httpStatus}`;
+  if (/fetch failed|network|econn|enotfound|socket/i.test(message)) return 'network';
+  return 'other-redacted-provider-error';
+}
+
 export function compareBenchmarkResults(
   left: BenchmarkComparisonResult,
   right: BenchmarkComparisonResult,
 ): number {
   const providerOrder: Record<ProviderName, number> = { gemini: 0, jev: 1 };
+  const geminiModelOrder: Record<string, number> = {
+    [GEMINI_MODEL]: 0,
+    [GEMINI_FLASH_LITE_MODEL]: 1,
+  };
   return left.repeat - right.repeat
     || providerOrder[left.provider] - providerOrder[right.provider]
+    || (left.provider === 'gemini' && right.provider === 'gemini'
+      ? (geminiModelOrder[left.model ?? ''] ?? Number.MAX_SAFE_INTEGER)
+        - (geminiModelOrder[right.model ?? ''] ?? Number.MAX_SAFE_INTEGER)
+      : 0)
     || left.id.localeCompare(right.id);
 }
 
@@ -141,7 +167,9 @@ export async function classifyFixture(
     durationMs,
     modelCallDurationMs: metrics.modelCallDurationMs,
     modelCallCount: metrics.modelCallCount,
-    model: outcome.model,
+    model: provider.model,
+    variant: provider.variant,
+    answers: metrics.answers,
     confidence: metrics.confidences.length > 0
       ? metrics.confidences.reduce((sum, value) => sum + value, 0) / metrics.confidences.length
       : undefined,
@@ -168,7 +196,17 @@ async function runBounded(
 async function main(): Promise<void> {
   const args = parseArgs();
   const { fixtures, hash: fixtureHash } = loadFixtures();
-  const providers: ProviderAdapter[] = [createGeminiProvider(), createJevProvider()];
+  const allProviders: ProviderAdapter[] = [
+    createGeminiProvider({ model: GEMINI_MODEL }),
+    createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }),
+    createJevProvider(),
+    createJevProvider(undefined, 'native'),
+  ];
+  const providers = args.only === null ? allProviders.slice(0, 3) : allProviders.filter((provider) =>
+    args.only === 'jev-ab' ? provider.provider === 'jev' :
+      args.only === 'jev' ? provider.provider === 'jev' && provider.variant === 'current' :
+      args.only === 'gemini-flash' ? provider.model === GEMINI_MODEL :
+        provider.model === GEMINI_FLASH_LITE_MODEL);
   const results: BenchmarkComparisonResult[] = [];
 
   for (let repeat = 1; repeat <= args.repeats; repeat += 1) {
@@ -182,7 +220,11 @@ async function main(): Promise<void> {
       results.push(...providerResults);
       const providerErrorCount = providerResults.filter((result) => result.providerError !== null).length;
       if (providerErrorCount > 0) {
-        throw new Error(`${provider.provider} repeat ${repeat} emitted ${providerErrorCount} provider-error records`);
+        const errorKinds = [...new Set(providerResults.flatMap((result) =>
+          result.providerError?.messages.map(providerErrorKind) ?? []))].sort();
+        throw new Error(
+          `${provider.provider} ${provider.model} repeat ${repeat} emitted ${providerErrorCount} provider-error records (${errorKinds.join(', ')})`,
+        );
       }
     }
   }
@@ -196,7 +238,7 @@ async function main(): Promise<void> {
       publicBaseline: args.baseline,
       fixtureCount: fixtures.length,
       fixtureSha256: fixtureHash,
-      models: { gemini: GEMINI_MODEL, jev: JEV_MODEL },
+      models: providers.map(({ provider, model, variant }) => ({ provider, model, variant: variant ?? 'default' })),
       promptSha256: { sharedClassifierSystem: hash(readFileSync(resolve(__dirname, '..', 'prompts', 'system.txt'))) },
       repeats: args.repeats,
       providerContract: 'shared-full-two-stage-classifier',

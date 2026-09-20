@@ -39,6 +39,21 @@ function clientReturning(selected: string, observedSignals: AbortSignal[] = []):
 }
 
 describe('Jev benchmark provider', () => {
+  test('native variant uses pinned Choice criteria and preserves probabilities', async () => {
+    let criteria: string[] = [];
+    const client: JevSystemOneClient = {
+      async systemOne(request) {
+        criteria = Object.keys(request.questions.decision.criteria);
+        return { model: JEV_MODEL, usage: { input_tokens: 1, output_tokens: 1 }, answers: { decision: {
+          type: 'choice', choice: 'BLOCK', confidence: 0.8, probabilities: { ALLOW: 0.1, BLOCK: 0.9 },
+        } } };
+      },
+    };
+    const session = createJevProvider(() => client, 'native').createSession();
+    await session.call({ stage: 'stage1', model: JEV_MODEL, system: 'ignored', messages: [], maxTokens: 1024, temperature: 0 });
+    assert.deepEqual(criteria, ['ALLOW', 'BLOCK']);
+    assert.deepEqual(session.snapshot().answers[0].probabilities, { ALLOW: 0.1, BLOCK: 0.9 });
+  });
   test('normalises a typed Choice to the shared stage-one contract', async () => {
     const signals: AbortSignal[] = [];
     const session = createJevProvider(() => clientReturning('allow', signals)).createSession();

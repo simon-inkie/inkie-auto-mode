@@ -9,6 +9,7 @@ export interface ProviderMetrics {
   modelCallCount: number;
   confidences: number[];
   errors: string[];
+  answers: Array<{ choice: string; probabilities: Record<string, number>; confidence: number; stage: string }>;
 }
 
 export interface ProviderSession {
@@ -19,6 +20,7 @@ export interface ProviderSession {
 export interface ProviderAdapter {
   provider: ProviderName;
   model: string;
+  variant?: string;
   createSession(): ProviderSession;
 }
 
@@ -30,6 +32,7 @@ export function emptyProviderMetrics(): ProviderMetrics {
     modelCallCount: 0,
     confidences: [],
     errors: [],
+    answers: [],
   };
 }
 

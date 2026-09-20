@@ -3,9 +3,11 @@ import { strict as assert } from 'node:assert';
 import {
   classifyFixture,
   compareBenchmarkResults,
+  parseArgs,
+  parseOnly,
   type BenchmarkComparisonResult,
 } from '../benchmarks/compare-jev.js';
-import { createGeminiProvider } from '../benchmarks/gemini-session.js';
+import { createGeminiProvider, GEMINI_FLASH_LITE_MODEL } from '../benchmarks/gemini-session.js';
 import { createJevProvider, type JevSystemOneClient } from '../benchmarks/jev-choice.js';
 import type { ProviderAdapter } from '../benchmarks/provider-contract.js';
 import { STAGE1_MAX_OUTPUT_TOKENS, STAGE2_MAX_OUTPUT_TOKENS } from '../core/classifier.js';
@@ -75,6 +77,15 @@ function recordStages(provider: ProviderAdapter, stages: ModelCallOptions['stage
 }
 
 describe('benchmark provider contract', () => {
+  test('validates explicit benchmark provider selection', () => {
+    assert.equal(parseOnly('gemini-flash-lite'), 'gemini-flash-lite');
+    assert.deepEqual(parseArgs(['--only', 'jev']), { repeats: 2, concurrency: 4, baseline: 'unknown', only: 'jev' });
+    assert.throws(() => parseOnly('gemini'), /--only must be one of/);
+  });
+  test('Gemini provider accepts an explicit pinned model', () => {
+    assert.equal(createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }).model, GEMINI_FLASH_LITE_MODEL);
+    assert.equal(createGeminiProvider(GEMINI_FLASH_LITE_MODEL).model, GEMINI_FLASH_LITE_MODEL);
+  });
   test('Gemini and Jev both traverse stage 1 then stage 2 for a dynamic fixture', async () => {
     const geminiCalls: number[] = [];
     const jevCalls: string[][] = [];
@@ -129,8 +140,9 @@ describe('benchmark provider contract', () => {
             outputTokens: 0,
             modelCallDurationMs: 0,
             modelCallCount: calls,
-            confidences: [],
-            errors: Array.from({ length: calls }, () => 'provider unavailable'),
+          confidences: [],
+          errors: Array.from({ length: calls }, () => 'provider unavailable'),
+          answers: [],
           }),
         };
       },
@@ -165,6 +177,7 @@ describe('benchmark provider contract', () => {
       modelCallDurationMs: 0,
       modelCallCount: 0,
       usage: { inputTokens: 0, outputTokens: 0 },
+      answers: [],
     });
     const values = [
       result(2, 'jev', 'b'),

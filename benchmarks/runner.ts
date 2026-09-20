@@ -4,7 +4,7 @@
  *
  * Usage:
  *   pnpm benchmark                                                              # static-only (no API calls)
- *   pnpm benchmark --stage1 google/gemini-3-flash-preview --stage2 anthropic/claude-sonnet-4-6
+ *   pnpm benchmark --stage1 google/gemini-3.8-flash --stage2 anthropic/claude-sonnet-4-6
  *   pnpm benchmark --category obfuscation                                       # single category
  *   pnpm benchmark --static-only                                                # skip LLM stages
  */

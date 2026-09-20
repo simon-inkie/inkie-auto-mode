@@ -4,10 +4,14 @@
 
 Correct the benchmark-only Gemini/Jev seam without changing installed adapters,
 live routes, provider selection, configuration, or the 159-fixture corpus.
+The comparison runs Jev plus the explicitly pinned Gemini 3.8 Flash and Gemini
+3.5 Flash Lite models on the same fixtures and repeats.
+Use `--only gemini-flash`, `--only gemini-flash-lite`, or `--only jev` for a
+single-provider run; without `--only`, all three run in the order below.
 
 ## Contract
 
-- The runner invokes the shared classifier once per fixture for both providers.
+- The runner invokes the shared classifier once per fixture for each provider/model pair.
 - Static decisions stay in the shared classifier and make zero provider calls.
 - Every dynamic provider call receives an explicit `stage1` or `stage2` value.
 - Stage 1 carries an explicit 1,024-token output budget in both provider
@@ -17,12 +21,12 @@ live routes, provider selection, configuration, or the 159-fixture corpus.
   generation-token control. Stage selection never depends on that budget.
 - Each provider returns the classifier's existing string contract plus normalised
   usage, confidence, elapsed provider-call time, and redacted errors.
-- Each request has an abort-backed 20-second timeout whose timer is unrefed and
+- Each request has an abort-backed 30-second timeout whose timer is unrefed and
   cleared after settlement. Jev receives the same signal through its SDK.
 - Provider failures produce null benchmark decisions and are excluded from pass,
   safety-miss, and disagreement rates. Any provider error fails the batch.
-- Result order is repeat, Gemini then Jev, then fixture ID. Each of four clean
-  repeats executes Gemini before Jev.
+- Result order is repeat, Gemini Flash, Gemini Flash Lite, Jev, then fixture ID.
+  Each repeat executes those three provider/model pairs in that order.
 
 ## Provider differences disclosed
 

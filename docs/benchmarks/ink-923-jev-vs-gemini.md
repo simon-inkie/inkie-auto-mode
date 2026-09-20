@@ -1,8 +1,8 @@
-# INK-923: Jev versus Gemini Flash
+# INK-923: Jev versus Gemini Flash variants
 
 ## Result
 
-Two independent passes of the public 159-fixture corpus completed on 19 September 2026. This is a benchmark-only comparison: it changes no installed adapter, live route, private configuration, or credential source.
+Two independent passes of the public 159-fixture corpus completed on 19 September 2026 using the pinned latest GA Gemini benchmark model. This is a benchmark-only comparison: it changes no installed adapter, live route, private configuration, or credential source.
 
 | Provider | Model | Runs | Passed | Expected-block misses | Mean latency | Median latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -19,6 +19,6 @@ Jev returned confidence for its 190 non-static calls: mean 0.7079. It exposed 96
 - Corpus: 159 fixtures, SHA-256 `008179d533942eebf326a4adb0786371ec06129f811fa9c0b5f219ff99e2811c`
 - Prompt SHA-256: Gemini system `c3cb28a5bd36e5a2a0ed67144ecec4f5add43f5251ecc4779c4c8f417bebce9b`; Jev Choice `3345f4bd624bc59fd511ae5b258b801d8a31101ca2bab8b7057ae2ba20261b5c`
 - Two repeats, concurrency four, 636 total records, zero provider errors.
-- Run `pnpm benchmark:jev -- --repeats 2 --concurrency 4 --baseline <public-commit>` with `TYPESAFE_API_KEY` supplied externally. The runner resolves no private route or configuration. The Jev key used for this run was supplied only through the local pass entry and is neither logged nor stored.
+- Run `pnpm benchmark:jev -- --repeats 2 --concurrency 4 --baseline <public-commit>` with `TYPESAFE_API_KEY` and a Google Gemini API key supplied externally. The runner resolves no private route or configuration. The Jev key used for this run was supplied only through the local pass entry and is neither logged nor stored.
 
 Raw result records are gitignored because they contain fixture-level model output. The committed report contains aggregates only.
