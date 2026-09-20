@@ -43,12 +43,12 @@ function clientReturning(selected: string, observedSignals: AbortSignal[] = []):
 
 describe('Jev benchmark provider', () => {
   test('thresholded A applies exact boundaries with Stage 2 BLOCK precedence', () => {
-    assert.deepEqual(JEV_THRESHOLDED_A, { stage1Allow: 0.85, stage2Allow: 0.60, stage2Block: 0.03 });
-    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.85, BLOCK: 0.15 }), 'ALLOW');
-    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.849, BLOCK: 0.151 }), 'BLOCK');
-    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.90, BLOCK: 0.03, ASK: 0.07 }), 'BLOCK');
-    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.60, BLOCK: 0.029, ASK: 0.371 }), 'ALLOW');
-    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.599, BLOCK: 0.029, ASK: 0.372 }), 'ASK');
+    assert.deepEqual(JEV_THRESHOLDED_A, { stage1Allow: 0.86, stage2Allow: 0.61, stage2Block: 0.09 });
+    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.86, BLOCK: 0.14 }), 'ALLOW');
+    assert.equal(thresholdedADecision('stage1', { ALLOW: 0.859, BLOCK: 0.141 }), 'BLOCK');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.90, BLOCK: 0.09, ASK: 0.01 }), 'BLOCK');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.61, BLOCK: 0.089, ASK: 0.301 }), 'ALLOW');
+    assert.equal(thresholdedADecision('stage2', { ALLOW: 0.609, BLOCK: 0.089, ASK: 0.302 }), 'ASK');
   });
 
   test('thresholded A resolves deterministically from probabilities while default uses Choice', async () => {

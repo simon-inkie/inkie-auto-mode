@@ -92,7 +92,7 @@ describe('benchmark provider contract', () => {
           type: 'choice',
           choice: stage1 ? 'ALLOW' : 'ASK',
           confidence: 0.5,
-          probabilities: stage1 ? { ALLOW: 0.20, BLOCK: 0.80 } : { ALLOW: 0.60, ASK: 0.39, BLOCK: 0.01 },
+          probabilities: stage1 ? { ALLOW: 0.20, BLOCK: 0.80 } : { ALLOW: 0.61, ASK: 0.38, BLOCK: 0.01 },
         } } };
       },
     }), 'current', 'thresholded-a');
@@ -100,7 +100,7 @@ describe('benchmark provider contract', () => {
     assert.equal(result.actual, 'allow');
     assert.equal(result.variant, 'current');
     assert.equal(result.decisionPolicy, 'thresholded-a');
-    assert.deepEqual(result.thresholds, { stage1Allow: 0.85, stage2Allow: 0.60, stage2Block: 0.03 });
+    assert.deepEqual(result.thresholds, { stage1Allow: 0.86, stage2Allow: 0.61, stage2Block: 0.09 });
   });
   test('Gemini provider accepts an explicit pinned model', () => {
     assert.equal(createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }).model, GEMINI_FLASH_LITE_MODEL);
