@@ -79,6 +79,7 @@ function recordStages(provider: ProviderAdapter, stages: ModelCallOptions['stage
 describe('benchmark provider contract', () => {
   test('validates explicit benchmark provider selection', () => {
     assert.equal(parseOnly('gemini-flash-lite'), 'gemini-flash-lite');
+    assert.equal(parseOnly('jev-c'), 'jev-c');
     assert.deepEqual(parseArgs(['--only', 'jev']), { repeats: 2, concurrency: 4, baseline: 'unknown', only: 'jev' });
     assert.throws(() => parseOnly('gemini'), /--only must be one of/);
   });

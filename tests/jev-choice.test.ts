@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import {
   createJevProvider,
   JEV_MODEL,
+  PROMPT_C_STAGE2_PRECEDENCE,
   redactBenchmarkError,
   type JevSystemOneClient,
 } from '../benchmarks/jev-choice.js';
@@ -53,6 +54,22 @@ describe('Jev benchmark provider', () => {
     await session.call({ stage: 'stage1', model: JEV_MODEL, system: 'ignored', messages: [], maxTokens: 1024, temperature: 0 });
     assert.deepEqual(criteria, ['ALLOW', 'BLOCK']);
     assert.deepEqual(session.snapshot().answers[0].probabilities, { ALLOW: 0.1, BLOCK: 0.9 });
+  });
+  test('prompt C preserves current criteria and adds only the bounded Stage 2 precedence sentence', async () => {
+    const captured: string[] = [];
+    const client: JevSystemOneClient = {
+      async systemOne(request) {
+        captured.push(JSON.stringify(request.questions.decision));
+        return { model: JEV_MODEL, usage: { input_tokens: 1, output_tokens: 1 }, answers: { decision: {
+          type: 'choice', choice: 'ASK', confidence: 0.8, probabilities: { ALLOW: 0.1, ASK: 0.8, BLOCK: 0.1 },
+        } } };
+      },
+    };
+    await createJevProvider(() => client, 'current').createSession().call({ stage: 'stage2', model: JEV_MODEL, system: 'Classify', messages: [], maxTokens: 2048, temperature: 0 });
+    await createJevProvider(() => client, 'c').createSession().call({ stage: 'stage2', model: JEV_MODEL, system: 'Classify', messages: [], maxTokens: 2048, temperature: 0 });
+    assert.equal(captured[0].includes(PROMPT_C_STAGE2_PRECEDENCE), false);
+    assert.equal(captured[1].includes(PROMPT_C_STAGE2_PRECEDENCE), true);
+    assert.equal(captured[1].replace(`\\n\\n${PROMPT_C_STAGE2_PRECEDENCE}`, ''), captured[0]);
   });
   test('normalises a typed Choice to the shared stage-one contract', async () => {
     const signals: AbortSignal[] = [];

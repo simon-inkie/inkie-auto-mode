@@ -20,7 +20,7 @@ interface Args {
   repeats: number;
   concurrency: number;
   baseline: string;
-  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | null;
+  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | null;
 }
 
 export interface BenchmarkComparisonResult {
@@ -46,8 +46,8 @@ export interface BenchmarkComparisonResult {
 }
 
 export function parseOnly(value: string): Args['only'] {
-  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab') return value;
-  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab (received ${value})`);
+  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c') return value;
+  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c (received ${value})`);
 }
 
 export function parseArgs(values = process.argv.slice(2)): Args {
@@ -62,7 +62,7 @@ export function parseArgs(values = process.argv.slice(2)): Args {
       case '--baseline': baseline = values[++index] ?? baseline; break;
       case '--only': only = parseOnly(values[++index] ?? ''); break;
       case '--help':
-        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
+        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
         process.exit(0);
     }
   }
@@ -201,9 +201,11 @@ async function main(): Promise<void> {
     createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }),
     createJevProvider(),
     createJevProvider(undefined, 'native'),
+    createJevProvider(undefined, 'c'),
   ];
   const providers = args.only === null ? allProviders.slice(0, 3) : allProviders.filter((provider) =>
-    args.only === 'jev-ab' ? provider.provider === 'jev' :
+    args.only === 'jev-ab' ? provider.provider === 'jev' && provider.variant !== 'c' :
+    args.only === 'jev-c' ? provider.provider === 'jev' && provider.variant === 'c' :
       args.only === 'jev' ? provider.provider === 'jev' && provider.variant === 'current' :
       args.only === 'gemini-flash' ? provider.model === GEMINI_MODEL :
         provider.model === GEMINI_FLASH_LITE_MODEL);
