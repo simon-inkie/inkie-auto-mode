@@ -28,6 +28,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
 import { modelCall } from "../adapters/claude-code/src/model-call.js";
 import { modelCall as cursorModelCall } from "../adapters/cursor/src/model-call.js";
+import { createModelCall as createOpenClawModelCall } from "../adapters/openclaw/src/plugin.js";
 
 const KEY_VARS = [
   "GOOGLE_GENERATIVE_AI_API_KEY",
@@ -38,12 +39,16 @@ const KEY_VARS = [
 const originalEnv: Record<string, string | undefined> = {};
 const realFetch = globalThis.fetch;
 
-/** Captures the key query param off the outgoing request, then short-circuits. */
-function stubFetch(): { keys: string[] } {
-  const captured: { keys: string[] } = { keys: [] };
-  globalThis.fetch = (async (url: string | URL) => {
-    const match = String(url).match(/[?&]key=([^&]*)/);
-    captured.keys.push(match ? match[1] : "");
+/** Captures outgoing request URLs and headers, then short-circuits. */
+function stubFetch(): { requests: Array<{ url: string; headers: Headers }> } {
+  const captured: { requests: Array<{ url: string; headers: Headers }> } = {
+    requests: [],
+  };
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    captured.requests.push({
+      url: String(url),
+      headers: new Headers(init?.headers),
+    });
     return {
       ok: true,
       status: 200,
@@ -52,6 +57,15 @@ function stubFetch(): { keys: string[] } {
     };
   }) as unknown as typeof globalThis.fetch;
   return captured;
+}
+
+function assertGeminiAuth(
+  captured: ReturnType<typeof stubFetch>,
+  expectedKey: string,
+): void {
+  assert.equal(captured.requests.length, 1);
+  assert.equal(captured.requests[0]!.headers.get("x-goog-api-key"), expectedKey);
+  assert.doesNotMatch(captured.requests[0]!.url, /[?&]key=/);
 }
 
 function setEnv(vars: Partial<Record<(typeof KEY_VARS)[number], string | undefined>>): void {
@@ -88,7 +102,7 @@ describe("model-call: Google credential resolution", () => {
     setEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "canonical-key" });
     const cap = stubFetch();
     await modelCall(OPTS);
-    assert.deepEqual(cap.keys, ["canonical-key"]);
+    assertGeminiAuth(cap, "canonical-key");
   });
 
   test("canonical key wins when every candidate is populated", async () => {
@@ -99,28 +113,28 @@ describe("model-call: Google credential resolution", () => {
     });
     const cap = stubFetch();
     await modelCall(OPTS);
-    assert.deepEqual(cap.keys, ["canonical-key"]);
+    assertGeminiAuth(cap, "canonical-key");
   });
 
   test("an empty-string canonical var falls through to the populated legacy key", async () => {
     setEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "", GEMINI_API_KEY: "legacy-gemini" });
     const cap = stubFetch();
     await modelCall(OPTS);
-    assert.deepEqual(cap.keys, ["legacy-gemini"]);
+    assertGeminiAuth(cap, "legacy-gemini");
   });
 
   test("an empty-string GEMINI_API_KEY does not mask a populated GOOGLE_API_KEY", async () => {
     setEnv({ GEMINI_API_KEY: "", GOOGLE_API_KEY: "legacy-google" });
     const cap = stubFetch();
     await modelCall(OPTS);
-    assert.deepEqual(cap.keys, ["legacy-google"]);
+    assertGeminiAuth(cap, "legacy-google");
   });
 
   test("legacy-only environments keep working (back-compat)", async () => {
     setEnv({ GEMINI_API_KEY: "legacy-gemini" });
     const cap = stubFetch();
     await modelCall(OPTS);
-    assert.deepEqual(cap.keys, ["legacy-gemini"]);
+    assertGeminiAuth(cap, "legacy-gemini");
   });
 
   test("no credential at all throws naming all three accepted vars", async () => {
@@ -141,13 +155,28 @@ describe("model-call: Google credential resolution", () => {
     setEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "" });
     const cap = stubFetch();
     await assert.rejects(() => modelCall(OPTS));
-    assert.deepEqual(cap.keys, [], "must not put an empty key on the wire");
+    assert.deepEqual(cap.requests, [], "must not put an empty key on the wire");
   });
 
   test("the cursor adapter resolves credentials identically", async () => {
     setEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "canonical-key", GEMINI_API_KEY: "" });
     const cap = stubFetch();
     await cursorModelCall(OPTS);
-    assert.deepEqual(cap.keys, ["canonical-key"]);
+    assertGeminiAuth(cap, "canonical-key");
+  });
+
+  test("the OpenClaw adapter sends its runtime credential only in the header", async () => {
+    setEnv({});
+    const cap = stubFetch();
+    const openClawModelCall = createOpenClawModelCall({
+      config: {},
+      runtime: {
+        modelAuth: {
+          resolveApiKeyForProvider: async () => ({ apiKey: "openclaw-key" }),
+        },
+      },
+    } as unknown as Parameters<typeof createOpenClawModelCall>[0]);
+    await openClawModelCall(OPTS);
+    assertGeminiAuth(cap, "openclaw-key");
   });
 });
