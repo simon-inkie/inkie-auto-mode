@@ -64,6 +64,8 @@ export const DEFAULT_CONFIG: ClassifierConfig = {
 
 /** Provider-agnostic model call interface */
 export interface ModelCallOptions {
+  /** Classifier stage making this call. */
+  stage: 'stage1' | 'stage2';
   model: string;
   system: string;
   messages: Array<{ role: 'user'; content: string }>;

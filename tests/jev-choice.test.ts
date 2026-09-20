@@ -1,75 +1,94 @@
 import { describe, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
+  createJevProvider,
   JEV_MODEL,
-  createJevChoiceAdapter,
-  normaliseJevChoice,
   redactBenchmarkError,
   type JevSystemOneClient,
 } from '../benchmarks/jev-choice.js';
-import type { BenchmarkFixture } from '../core/types.js';
+import { STAGE1_MAX_OUTPUT_TOKENS } from '../core/classifier.js';
 
-const fixture: BenchmarkFixture = {
-  id: 'choice-allow',
-  category: 'benchmark-adapter',
-  command: 'rm preview.webp',
-  expected: 'allow',
-  transcript: [{ role: 'user', text: 'Check the branch.' }],
-};
-
-function clientReturning(choice: string): JevSystemOneClient {
+function clientReturning(selected: string, observedSignals: AbortSignal[] = []): JevSystemOneClient {
   return {
-    async systemOne(request) {
+    async systemOne(request, options) {
       assert.equal(request.model, JEV_MODEL);
-      assert.deepEqual(JSON.parse(request.state), {
-        command: 'rm preview.webp',
-        transcript: fixture.transcript,
-        source: 'direct',
-      });
+      const state = JSON.parse(String(request.state)) as {
+        outputBudgetTokens: number;
+        temperature: number;
+      };
+      const criterionCount = Object.keys(request.questions.decision.criteria).length;
+      assert.equal(state.outputBudgetTokens, criterionCount === 2 ? STAGE1_MAX_OUTPUT_TOKENS : 2048);
+      assert.equal(state.temperature, 0);
+      if (options?.signal) observedSignals.push(options.signal);
+      assert.equal(options?.retry?.maxRetries, 0);
+      assert.ok(options?.signal instanceof AbortSignal);
       return {
         model: JEV_MODEL,
         usage: { input_tokens: 17, output_tokens: 2 },
-        answers: { decision: { choice, confidence: 0.91 } },
+        answers: {
+          decision: {
+            type: 'choice',
+            choice: selected,
+            confidence: 0.91,
+            probabilities: { ALLOW: 0.91, ASK: 0.04, BLOCK: 0.05 },
+          },
+        },
       };
     },
   };
 }
 
-describe('Jev Choice benchmark adapter', () => {
-  test('maps a typed Choice result and preserves usage and confidence', async () => {
-    const result = await createJevChoiceAdapter(clientReturning('ALLOW'))(fixture);
-    assert.deepEqual(result, {
-      decision: 'allow',
+describe('Jev benchmark provider', () => {
+  test('normalises a typed Choice to the shared stage-one contract', async () => {
+    const signals: AbortSignal[] = [];
+    const session = createJevProvider(() => clientReturning('allow', signals)).createSession();
+    assert.equal(await session.call({
       stage: 'stage1',
-      confidence: 0.91,
-      usage: { inputTokens: 17, outputTokens: 2 },
       model: JEV_MODEL,
+      system: 'Classify',
+      messages: [{ role: 'user', content: 'pwd' }],
+      maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
+      temperature: 0,
+    }), 'ALLOW');
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].aborted, false);
+    const metrics = session.snapshot();
+    assert.equal(metrics.inputTokens, 17);
+    assert.equal(metrics.outputTokens, 2);
+    assert.equal(metrics.modelCallCount, 1);
+    assert.ok(metrics.modelCallDurationMs >= 0);
+    assert.deepEqual(metrics.confidences, [0.91]);
+    assert.deepEqual(metrics.errors, []);
+  });
+
+  test('normalises a typed Choice to the shared stage-two JSON contract', async () => {
+    const session = createJevProvider(() => clientReturning('ask')).createSession();
+    const response = await session.call({
+      stage: 'stage2',
+      model: JEV_MODEL,
+      system: 'Classify',
+      messages: [{ role: 'user', content: 'rm -rf out' }],
+      maxTokens: 2048,
+      temperature: 0,
     });
+    assert.deepEqual(JSON.parse(response), { thinking: '', decision: 'ASK' });
   });
 
-  test('normalises only the closed decision set', () => {
-    assert.equal(normaliseJevChoice(' ask '), 'ask');
-    assert.throws(() => normaliseJevChoice('approve'), /Unexpected Jev Choice label/);
-    assert.throws(() => normaliseJevChoice(null), /Unexpected Jev Choice label/);
+  test('records and rejects labels outside the stage closed set', async () => {
+    const session = createJevProvider(() => clientReturning('ask')).createSession();
+    await assert.rejects(session.call({
+      stage: 'stage1',
+      model: JEV_MODEL,
+      system: 'x',
+      messages: [],
+      maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
+      temperature: 0,
+    }), /stage 1/);
+    assert.equal(session.snapshot().errors.length, 1);
   });
 
-  test('fails closed and redacts a provider error', async () => {
-    const result = await createJevChoiceAdapter({
-      async systemOne() {
-        throw new Error('Authorization: Bearer ts_abcdefghijk TYPESAFE_API_KEY=ts_secretvalue');
-      },
-    })(fixture);
-    assert.equal(result.decision, 'block');
-    assert.equal(result.stage, 'error');
-    assert.match(result.error ?? '', /\[REDACTED\]/);
-    assert.doesNotMatch(result.error ?? '', /ts_abcdefghijk|ts_secretvalue/);
-  });
-
-  test('redacts common credential shapes without changing ordinary errors', () => {
+  test('redacts common credential shapes', () => {
     assert.equal(redactBenchmarkError(new Error('network timeout')), 'network timeout');
-    assert.doesNotMatch(
-      redactBenchmarkError('x-api-key: sk_abcdefghijk'),
-      /sk_abcdefghijk/,
-    );
+    assert.doesNotMatch(redactBenchmarkError('x-api-key: sk_abcdefghijk'), /sk_abcdefghijk/);
   });
 });

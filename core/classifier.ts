@@ -31,6 +31,10 @@ const STAGE1_SUFFIX = '\n\nErr on the side of blocking. Respond with exactly one
 const STAGE2_SUFFIX = '\n\nReview the classification carefully. Explicit user confirmation (not suggestive or implicit) is required to override a block. Think step by step, then respond with JSON: {"thinking": "...", "decision": "ALLOW|ASK|BLOCK", "reason": "..."}';
 const FALLBACK_PREFIX = 'You are running as a fallback classifier. When uncertain, block.\n\n';
 
+/** Allows thinking models enough budget to emit the requested visible decision. */
+export const STAGE1_MAX_OUTPUT_TOKENS = 1024;
+export const STAGE2_MAX_OUTPUT_TOKENS = 2048;
+
 /**
  * Run the full classification pipeline:
  * 1. Static pattern matching (0ms)
@@ -129,10 +133,11 @@ async function runStage1(
   // Try primary model
   try {
     const response = await modelCall({
+      stage: 'stage1',
       model: primaryModel,
       system: systemPrompt + STAGE1_SUFFIX,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 8,
+      maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
       temperature: 0,
     });
 
@@ -147,10 +152,11 @@ async function runStage1(
   // Try fallback model
   try {
     const response = await modelCall({
+      stage: 'stage1',
       model: fallbackModel,
       system: FALLBACK_PREFIX + systemPrompt + STAGE1_SUFFIX,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 8,
+      maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
       temperature: 0,
     });
 
@@ -187,10 +193,11 @@ async function runStage2(
   // Try primary model
   try {
     const response = await modelCall({
+      stage: 'stage2',
       model: primaryModel,
       system: systemPrompt + STAGE2_SUFFIX,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 2048,
+      maxTokens: STAGE2_MAX_OUTPUT_TOKENS,
       temperature: 0,
     });
 
@@ -205,10 +212,11 @@ async function runStage2(
   // Try fallback model
   try {
     const response = await modelCall({
+      stage: 'stage2',
       model: fallbackModel,
       system: FALLBACK_PREFIX + systemPrompt + STAGE2_SUFFIX,
       messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 2048,
+      maxTokens: STAGE2_MAX_OUTPUT_TOKENS,
       temperature: 0,
     });
 

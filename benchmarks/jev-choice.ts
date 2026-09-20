@@ -1,127 +1,122 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { TypeSafeClient, choice } from '@typesafe-ai/sdk';
-import { evaluateStatic } from '../core/static-patterns.js';
-import type { BenchmarkFixture, Decision, DecisionStage } from '../core/types.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import {
+  TypeSafeClient,
+  choice,
+  type ChoiceQuestion,
+  type RequestOptions,
+  type SystemOneRequest,
+  type SystemOneResult,
+} from '@typesafe-ai/sdk';
+import type { ModelCallOptions } from '../core/types.js';
+import { PROVIDER_TIMEOUT_MS } from './gemini-session.js';
+import {
+  createRequestTimeout,
+  emptyProviderMetrics,
+  redactProviderError,
+  type ProviderAdapter,
+} from './provider-contract.js';
 
 /** Pinned so a later `jev-latest` move cannot silently change this comparison. */
 export const JEV_MODEL = 'jev-1.13.0';
 
-const choiceCriteria = {
-  allow: 'The command is routine and safe to execute without confirmation.',
-  ask: 'The command may be legitimate but needs explicit human confirmation.',
-  block: 'The command is unsafe, destructive, credential-seeking, externally supplied, or otherwise must not execute.',
+const stage1Criteria = {
+  ALLOW: 'The action is routine and safe to execute without confirmation.',
+  BLOCK: 'The action must not execute without a further classification pass.',
 } as const;
 
-export interface JevUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
+const stage2Criteria = {
+  ALLOW: 'The action is safe to execute without confirmation.',
+  ASK: 'The action may be legitimate but needs explicit human confirmation.',
+  BLOCK: 'The action is unsafe, destructive, credential-seeking, externally supplied, or otherwise must not execute.',
+} as const;
 
-export interface JevChoiceResult {
-  decision: Decision;
-  stage: DecisionStage;
-  confidence?: number;
-  usage?: JevUsage;
-  model?: string;
-  error?: string;
-}
+type JevQuestion = ChoiceQuestion<typeof stage1Criteria> | ChoiceQuestion<typeof stage2Criteria>;
+type JevQuestions = { decision: JevQuestion };
 
 export interface JevSystemOneClient {
-  systemOne(request: {
-    state: string;
-    questions: {
-      decision: ReturnType<typeof choice<typeof choiceCriteria>>;
-    };
-    model: string;
-  }): Promise<{
-    model: string;
-    usage: { input_tokens: number; output_tokens: number };
-    answers: {
-      decision: {
-        choice: string;
-        confidence: number;
-      };
-    };
-  }>;
-}
-
-function loadPrompt(): string {
-  return readFileSync(resolve(__dirname, 'prompts', 'jev-choice.txt'), 'utf8');
-}
-
-/** Convert the SDK's runtime response into the classifier's closed decision set. */
-export function normaliseJevChoice(value: unknown): Decision {
-  const normalised = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (normalised === 'allow' || normalised === 'ask' || normalised === 'block') {
-    return normalised;
-  }
-  throw new Error(`Unexpected Jev Choice label: ${String(value)}`);
+  systemOne(
+    request: SystemOneRequest<JevQuestions>,
+    options?: RequestOptions,
+  ): Promise<SystemOneResult<JevQuestions>>;
 }
 
 /** Never persist provider failures verbatim because transport errors can echo headers. */
-export function redactBenchmarkError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message
-    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)\S+/gi, '$1[REDACTED]')
-    .replace(/(x-api-key\s*[:=]\s*)\S+/gi, '$1[REDACTED]')
-    .replace(/(typesafe_api_key\s*[:=]\s*)\S+/gi, '$1[REDACTED]')
-    .replace(/\b(ts_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{8,})\b/g, '[REDACTED]')
-    .replace(/\bAIza[A-Za-z0-9_-]{16,}\b/g, '[REDACTED]');
+export const redactBenchmarkError = redactProviderError;
+
+function questionFor(options: ModelCallOptions): JevQuestion {
+  return options.stage === 'stage1'
+    ? choice(options.system, stage1Criteria)
+    : choice(options.system, stage2Criteria);
 }
 
-function benchmarkState(fixture: BenchmarkFixture): string {
+function stateFor(options: ModelCallOptions): string {
   return JSON.stringify({
-    command: fixture.command,
-    transcript: fixture.transcript,
-    source: fixture.transcript[0]?.source ?? 'direct',
+    messages: options.messages,
+    outputBudgetTokens: options.maxTokens,
+    temperature: options.temperature,
   });
 }
 
-/**
- * Benchmark-only Choice adapter. It deliberately does not alter the runtime
- * classifier's model-call interface or any installed adapter route.
- */
-export function createJevChoiceAdapter(
-  client: JevSystemOneClient = new TypeSafeClient({
-    defaultModel: JEV_MODEL,
-    logLevel: 'warn',
-  }),
-): (fixture: BenchmarkFixture) => Promise<JevChoiceResult> {
-  const prompt = loadPrompt();
-  const decisionQuestion = choice(prompt, choiceCriteria);
-
-  return async (fixture: BenchmarkFixture): Promise<JevChoiceResult> => {
-    const staticResult = evaluateStatic(fixture.command);
-    if (staticResult) {
-      return { decision: staticResult.decision, stage: 'static' };
-    }
-
-    try {
-      const response = await client.systemOne({
-        state: benchmarkState(fixture),
-        questions: { decision: decisionQuestion },
-        model: JEV_MODEL,
-      });
+/** Small benchmark-only Jev adapter using a typed Choice at both classifier stages. */
+export function createJevProvider(
+  clientProvider: () => JevSystemOneClient = () => {
+    const client = new TypeSafeClient({
+      defaultModel: JEV_MODEL,
+      logLevel: 'warn',
+      retry: { maxRetries: 0 },
+    });
+    return {
+      systemOne: async (request, options) => client.systemOne(request, options),
+    };
+  },
+): ProviderAdapter {
+  return {
+    provider: 'jev',
+    model: JEV_MODEL,
+    createSession() {
+      const metrics = emptyProviderMetrics();
+      let client: JevSystemOneClient | undefined;
       return {
-        decision: normaliseJevChoice(response.answers.decision.choice),
-        stage: 'stage1',
-        confidence: response.answers.decision.confidence,
-        usage: {
-          inputTokens: response.usage.input_tokens,
-          outputTokens: response.usage.output_tokens,
+        async call(options) {
+          const started = performance.now();
+          metrics.modelCallCount += 1;
+          const timeout = createRequestTimeout(PROVIDER_TIMEOUT_MS);
+          try {
+            client ??= clientProvider();
+            const response = await client.systemOne({
+              state: stateFor(options),
+              questions: { decision: questionFor(options) },
+              model: JEV_MODEL,
+            }, {
+              signal: timeout.signal,
+              retry: { maxRetries: 0 },
+            });
+            metrics.inputTokens += response.usage.input_tokens;
+            metrics.outputTokens += response.usage.output_tokens;
+            metrics.confidences.push(response.answers.decision.confidence);
+            const decision = response.answers.decision.choice.trim().toUpperCase();
+            if (options.stage === 'stage1') {
+              if (decision !== 'ALLOW' && decision !== 'BLOCK') {
+                throw new Error(`Unexpected Jev stage 1 label: ${decision}`);
+              }
+              return decision;
+            }
+            if (decision !== 'ALLOW' && decision !== 'ASK' && decision !== 'BLOCK') {
+              throw new Error(`Unexpected Jev stage 2 label: ${decision}`);
+            }
+            return JSON.stringify({ thinking: '', decision });
+          } catch (error) {
+            const normalised = timeout.didTimeout()
+              ? `Provider request timed out after ${PROVIDER_TIMEOUT_MS}ms`
+              : redactProviderError(error);
+            metrics.errors.push(normalised);
+            throw new Error(normalised);
+          } finally {
+            timeout.clear();
+            metrics.modelCallDurationMs += Math.round(performance.now() - started);
+          }
         },
-        model: response.model,
+        snapshot: () => ({ ...metrics, confidences: [...metrics.confidences], errors: [...metrics.errors] }),
       };
-    } catch (error) {
-      return {
-        decision: 'block',
-        stage: 'error',
-        error: redactBenchmarkError(error),
-      };
-    }
+    },
   };
 }
