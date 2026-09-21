@@ -47,50 +47,45 @@ function resolveConfig(pluginConfig?: Record<string, unknown>): ClassifierConfig
   };
 }
 
-export default definePluginEntry({
-  id: 'io-auto-mode',
-  name: 'Io Auto Mode',
-  description: 'Hybrid static + LLM exec and MCP security classifier.',
+type OpenClawModelApi = Pick<OpenClawPluginApi, 'config' | 'runtime'>;
 
-  register(api) {
-    // Set log path to absolute workspace location
-    setLogPath(join(homedir(), '.openclaw', 'workspace', 'memory', 'auto-mode-log.jsonl'));
+/** Build the model caller separately so its HTTP contract can be unit tested. */
+export function createModelCall(api: OpenClawModelApi): ModelCallFn {
+  return async (options: ModelCallOptions) => {
+    const [provider, ...modelParts] = options.model.split("/");
+    const modelId = modelParts.join("/");
 
-    const modelCallFn: ModelCallFn = async (options: ModelCallOptions) => {
-      const [provider, ...modelParts] = options.model.split("/");
-      const modelId = modelParts.join("/");
+    // Get API key via OpenClaw runtime auth
+    let apiKey: string | undefined;
+    try {
+      const auth = await api.runtime.modelAuth.resolveApiKeyForProvider({
+        provider,
+        cfg: api.config,
+      });
+      apiKey = (auth as { apiKey?: string })?.apiKey;
+    } catch { /* fall through */ }
 
-      // Get API key via OpenClaw runtime auth
-      let apiKey: string | undefined;
-      try {
-        const auth = await api.runtime.modelAuth.resolveApiKeyForProvider({
-          provider,
-          cfg: api.config,
-        });
-        apiKey = (auth as { apiKey?: string })?.apiKey;
-      } catch { /* fall through */ }
+    // Fallback to env vars. GOOGLE_GENERATIVE_AI_API_KEY is the canonical
+    // supported name; GEMINI_API_KEY / GOOGLE_API_KEY (the names Google's
+    // own SDKs auto-discover) are back-compat fallbacks.
+    // `||`, not `??`: these vars are routinely set-but-empty in agent
+    // environments, and `??` only falls through on null/undefined, so an
+    // empty canonical value would mask a populated fallback below it.
+    if (!apiKey && provider === "google")
+      apiKey =
+        process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY;
+    if (!apiKey && provider === "anthropic") apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error(`No API key for provider: ${provider}`);
 
-      // Fallback to env vars. GOOGLE_GENERATIVE_AI_API_KEY is the canonical
-      // supported name; GEMINI_API_KEY / GOOGLE_API_KEY (the names Google's
-      // own SDKs auto-discover) are back-compat fallbacks.
-      // `||`, not `??`: these vars are routinely set-but-empty in agent
-      // environments, and `??` only falls through on null/undefined, so an
-      // empty canonical value would mask a populated fallback below it.
-      if (!apiKey && provider === "google")
-        apiKey =
-          process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-          process.env.GEMINI_API_KEY ||
-          process.env.GOOGLE_API_KEY;
-      if (!apiKey && provider === "anthropic") apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey) throw new Error(`No API key for provider: ${provider}`);
-
-      try {
-        if (provider === "google") {
+    try {
+      if (provider === "google") {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: options.system }] },
               contents: options.messages.map((m) => ({
@@ -122,12 +117,24 @@ export default definePluginEntry({
         return data.content?.[0]?.text ?? "";
       }
 
-        throw new Error(`Unsupported provider: ${provider}`);
-      } catch (err) {
-        logDecision(options.model, { decision: 'block', stage: 'error', durationMs: 0, reason: `API call threw: ${err}` });
-        throw err;
-      }
-    };
+      throw new Error(`Unsupported provider: ${provider}`);
+    } catch (err) {
+      logDecision(options.model, { decision: 'block', stage: 'error', durationMs: 0, reason: `API call threw: ${err}` });
+      throw err;
+    }
+  };
+}
+
+export default definePluginEntry({
+  id: 'io-auto-mode',
+  name: 'Io Auto Mode',
+  description: 'Hybrid static + LLM exec and MCP security classifier.',
+
+  register(api) {
+    // Set log path to absolute workspace location
+    setLogPath(join(homedir(), '.openclaw', 'workspace', 'memory', 'auto-mode-log.jsonl'));
+
+    const modelCallFn = createModelCall(api);
 
     // Cache user messages for transcript context
     api.on('message_received', (event, _ctx) => {
