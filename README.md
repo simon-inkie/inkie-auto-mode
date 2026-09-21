@@ -109,13 +109,22 @@ The headline takeaway is the **shape**, not the absolute numbers: ~80% of decisi
 
 At Gemini 2.5 Flash pricing (~$0.30/M input tokens, ~$2.50/M output tokens), a casual session of ~50 tool calls/day costs single-digit pence. A heavy agentic-dev day (300+ tool calls) sits around 20-50p. Most of that is Stage 2 thinking output, which only fires on blocks — so the bill scales with how often the classifier *escalates*, not how often the agent runs commands.
 
-Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one short LLM call per agent action; Stage 2 is rarer + slightly chunkier. You can swap any stage to a local LLM via config if you want zero cost — see [`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md) for the planned Ollama / LM Studio path.
+Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one short LLM call per agent action; Stage 2 is rarer + slightly chunkier. The current shipped runtime uses Gemini; a provider-agnostic path for local LLMs is planned in [`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md).
 
 ---
 
 ## Benchmark evidence
 
 The [INK-923 benchmark](./docs/benchmarks/ink-923-jev-vs-gemini.md) compares Jev with pinned Gemini variants on fixture data; the [raw evidence bundle](./docs/benchmarks/ink-923-jev-2026-09-20/) includes the methodology and results. It is benchmark-only evidence, not a live provider switch.
+
+### Jev and the provider boundary
+
+Jev is TypeSafe System One. Its benchmark adapter asks typed `Choice`
+questions and receives a decision plus probabilities, rather than generated
+text. The pinned benchmark model is `jev-1.13.0`; the adapter lives in
+[`benchmarks/jev-choice.ts`](./benchmarks/jev-choice.ts) and is not used by the
+installed runtime or its provider selection. Jev integration remains a future
+boundary, pending an explicit runtime adapter and configuration contract.
 
 ---
 
@@ -359,11 +368,29 @@ All options under `plugins.entries.io-auto-mode.config`:
 | `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |
 | `mcpBlockPatterns` | `[]` | MCP canonical-name regexes blocked before allow or the LLM |
 
-Defaults are all-Gemini for cost + latency. Any provider OpenClaw supports
-(Anthropic, OpenAI, etc.) can be swapped in by changing the model strings —
-see [`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md) for the planned
-migration to AI SDK that makes this even smoother (Ollama / LM Studio /
-self-hosted included).
+Defaults are all-Gemini for cost + latency. The shipped adapters currently
+call Gemini, and provider swapping is not a live installed-runtime feature.
+The planned provider-agnostic migration is tracked in
+[`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md).
+
+For the current Gemini runtime, create `~/.io-auto-mode/config.json` with the
+stage models you want to use:
+
+```json
+{
+  "mode": "classify",
+  "stage1Model": "google/gemini-3.8-flash",
+  "stage1Fallback": "google/gemini-3.8-flash",
+  "stage2Model": "google/gemini-3.8-flash",
+  "stage2Fallback": "google/gemini-3.8-flash"
+}
+```
+
+Put the key in `~/.io-auto-mode/.env` as
+`GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here`. The legacy
+aliases `GEMINI_API_KEY` and `GOOGLE_API_KEY` are also accepted, in that order,
+for existing installations. This configuration applies to the shipped
+Gemini runtime only; it does not enable Jev.
 
 For the `Read` / `Write` / `Edit` file-tool classifier, configure `fileZones` (allowRead / allowWrite / deny) in either user-global (`~/.io-auto-mode/config.json`) or per-project (`<project>/.io-auto-mode.json`). Layers merge.
 
