@@ -21,7 +21,7 @@ interface Args {
   repeats: number;
   concurrency: number;
   baseline: string;
-  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | 'jev-thresholded-a' | null;
+  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | 'jev-thresholded-a' | 'jev-native-thresholded-a' | null;
 }
 
 export interface BenchmarkComparisonResult {
@@ -50,8 +50,8 @@ export interface BenchmarkComparisonResult {
 }
 
 export function parseOnly(value: string): Args['only'] {
-  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c' || value === 'jev-thresholded-a') return value;
-  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c, jev-thresholded-a (received ${value})`);
+  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c' || value === 'jev-thresholded-a' || value === 'jev-native-thresholded-a') return value;
+  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c, jev-thresholded-a, jev-native-thresholded-a (received ${value})`);
 }
 
 export function parseArgs(values = process.argv.slice(2)): Args {
@@ -66,13 +66,34 @@ export function parseArgs(values = process.argv.slice(2)): Args {
       case '--baseline': baseline = values[++index] ?? baseline; break;
       case '--only': only = parseOnly(values[++index] ?? ''); break;
       case '--help':
-        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c|jev-thresholded-a] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
+        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c|jev-thresholded-a|jev-native-thresholded-a] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
         process.exit(0);
     }
   }
   if (!Number.isInteger(repeats) || repeats < 2) throw new Error('--repeats must be an integer of at least 2');
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('--concurrency must be a positive integer');
   return { repeats, concurrency, baseline, only };
+}
+
+export function selectBenchmarkProviders(only: Args['only']): ProviderAdapter[] {
+  const geminiFlash = createGeminiProvider({ model: GEMINI_MODEL });
+  const geminiFlashLite = createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL });
+  const jevCurrent = createJevProvider();
+  const jevNative = createJevProvider(undefined, 'native');
+  const jevC = createJevProvider(undefined, 'c');
+  const jevThresholdedA = createJevProvider(undefined, 'current', 'thresholded-a');
+  const jevNativeThresholdedA = createJevProvider(undefined, 'native', 'thresholded-a');
+
+  switch (only) {
+    case null: return [geminiFlash, geminiFlashLite, jevCurrent];
+    case 'gemini-flash': return [geminiFlash];
+    case 'gemini-flash-lite': return [geminiFlashLite];
+    case 'jev': return [jevCurrent];
+    case 'jev-ab': return [jevCurrent, jevNative];
+    case 'jev-c': return [jevC];
+    case 'jev-thresholded-a': return [jevThresholdedA];
+    case 'jev-native-thresholded-a': return [jevNativeThresholdedA];
+  }
 }
 
 function hash(value: string | Buffer): string {
@@ -217,21 +238,7 @@ async function runBounded(
 async function main(): Promise<void> {
   const args = parseArgs();
   const { fixtures, hash: fixtureHash } = loadFixtures();
-  const allProviders: ProviderAdapter[] = [
-    createGeminiProvider({ model: GEMINI_MODEL }),
-    createGeminiProvider({ model: GEMINI_FLASH_LITE_MODEL }),
-    createJevProvider(),
-    createJevProvider(undefined, 'native'),
-    createJevProvider(undefined, 'c'),
-    createJevProvider(undefined, 'current', 'thresholded-a'),
-  ];
-  const providers = args.only === null ? allProviders.slice(0, 3) : allProviders.filter((provider) =>
-    args.only === 'jev-ab' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant !== 'c' :
-    args.only === 'jev-c' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant === 'c' :
-      args.only === 'jev' ? provider.provider === 'jev' && provider.decisionPolicy === 'choice' && provider.variant === 'current' :
-      args.only === 'jev-thresholded-a' ? provider.provider === 'jev' && provider.decisionPolicy === 'thresholded-a' :
-      args.only === 'gemini-flash' ? provider.model === GEMINI_MODEL :
-        provider.model === GEMINI_FLASH_LITE_MODEL);
+  const providers = selectBenchmarkProviders(args.only);
   const results: BenchmarkComparisonResult[] = [];
 
   for (let repeat = 1; repeat <= args.repeats; repeat += 1) {
