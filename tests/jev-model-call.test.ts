@@ -12,7 +12,7 @@ const opts: ModelCallOptions = {
   messages: [{ role: 'user', content: 'proposed-action' }], maxTokens: 1024, temperature: 0,
 };
 const answer = (choice: string, probabilities: Record<string, number>) => ({
-  answers: { decision: { choice, probabilities, confidence: 0.9 } },
+  answers: { decision: { type: 'choice', choice, probabilities, confidence: 0.9 } },
 });
 const clientFor = (value: unknown): JevClient => ({ async systemOne() { return value as Awaited<ReturnType<JevClient['systemOne']>>; } });
 let originalKey: string | undefined;
@@ -63,6 +63,13 @@ describe('Jev primary model transport', () => {
   });
   test('rejects missing, non-finite and incomplete probability data', async () => {
     for (const value of [null, answer('ALLOW', {}), answer('ALLOW', { ALLOW: NaN, BLOCK: 0.1 }), answer('ALLOW', { ALLOW: 0.99 }), answer('ASK', { ALLOW: 0.9, BLOCK: 0.1 })]) {
+      await assert.rejects(createJevModelCall(() => clientFor(value))(opts), /request failed/);
+    }
+  });
+  test('rejects non-Choice payloads and extra stage labels', async () => {
+    const nonChoice = answer('ALLOW', { ALLOW: 0.9, BLOCK: 0.1 });
+    nonChoice.answers.decision.type = 'score';
+    for (const value of [nonChoice, answer('ALLOW', { ALLOW: 0.9, BLOCK: 0.1, ASK: 1 })]) {
       await assert.rejects(createJevModelCall(() => clientFor(value))(opts), /request failed/);
     }
   });

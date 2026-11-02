@@ -42,8 +42,10 @@ export function createJevModelCall(
       const answer = validateJevChoice(response.answers.decision);
       if (options.stage === 'stage1' && answer.choice === 'ASK') throw new Error('Invalid stage 1 label');
       const labels = options.stage === 'stage1' ? ['ALLOW', 'BLOCK'] : ['ALLOW', 'ASK', 'BLOCK'];
-      const raw = (response.answers.decision as { probabilities: Record<string, unknown> }).probabilities;
-      if (labels.some(label => typeof raw[label] !== 'number')
+      const payload = response.answers.decision as { type?: unknown; probabilities: Record<string, unknown> };
+      if (payload.type !== 'choice') throw new Error('Invalid Jev response type');
+      const raw = payload.probabilities;
+      if (Object.keys(raw).length !== labels.length || labels.some(label => typeof raw[label] !== 'number')
         || Math.abs(labels.reduce((sum, label) => sum + answer.probabilities[label as keyof typeof answer.probabilities], 0) - 1) > 0.001) {
         throw new Error('Incomplete Jev probabilities');
       }
