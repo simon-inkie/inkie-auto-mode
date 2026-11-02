@@ -1,4 +1,5 @@
 import { definePluginEntry, type OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
+import { jevModelCall } from '../../../core/jev-model-call.js';
 import { classify } from '../../../core/classifier.js';
 import { classifyMcpCall, parseOpenClawMcpToolName } from '../../../core/mcp.js';
 import { logDecision } from '../../../core/logger.js';
@@ -43,6 +44,8 @@ export function createModelCall(api: OpenClawModelApi): ModelCallFn {
   return async (options: ModelCallOptions) => {
     const [provider, ...modelParts] = options.model.split("/");
     const modelId = modelParts.join("/");
+
+    if (provider === "typesafe") return jevModelCall(options);
 
     // Get API key via OpenClaw runtime auth
     let apiKey: string | undefined;

@@ -13,3 +13,6 @@ Mock provider calls: both stages, boundary/precedence, malformed response, missi
 
 ## Follow-ups
 Merge/deployment and any live provider canary need a separate instruction. Historical Gemini benchmark measurements remain labelled as historical, not Jev performance claims.
+
+## Implementation receipt
+Shared TypeSafe transport routes both Choice stages through all adapters. Added a strict primary-path probability completeness/sum check in addition to the shared label/confidence validator. SDK logging is off; public errors contain no raw provider text. Explicit Google configuration keeps the optional shadow tests independent of the new default. Nine focused transport/routing tests pass, including a fetch-mocked SDK call through Claude Code, Cursor and OpenClaw. Codex and Antigravity share the Claude Code transport import. Full gates and privacy review are pending at this commit.

@@ -59,7 +59,7 @@ Agent requests tool call
                      │
                      ▼
 ┌─── Stage 1 — Fast LLM (~1s p50) ────────────────┐
-│  Gemini Flash, plain text output                │
+│  Jev Choice, thresholded ALLOW/BLOCK                │
 │  Biased toward blocking                         │
 │  ALLOW → proceed                                │
 │  BLOCK → escalate to Stage 2                    │
@@ -67,7 +67,7 @@ Agent requests tool call
                      │ (only on BLOCK)
                      ▼
 ┌─── Stage 2 — Thinking LLM (~5s p50, blocks only)┐
-│  Gemini w/ thinking, JSON output                │
+│  Jev Choice, thresholded ALLOW/ASK/BLOCK                │
 │  Chain-of-thought reasoning                     │
 │  Final decision + reason                        │
 └─────────────────────────────────────────────────┘
@@ -107,7 +107,7 @@ The headline takeaway is the **shape**, not the absolute numbers: ~80% of decisi
 
 ## Cost
 
-At Gemini 2.5 Flash pricing (~$0.30/M input tokens, ~$2.50/M output tokens), a casual session of ~50 tool calls/day costs single-digit pence. A heavy agentic-dev day (300+ tool calls) sits around 20-50p. Most of that is Stage 2 thinking output, which only fires on blocks — so the bill scales with how often the classifier *escalates*, not how often the agent runs commands.
+The historical measurements above used Gemini. They are not Jev latency or pricing measurements. At Gemini 2.5 Flash pricing (~$0.30/M input tokens, ~$2.50/M output tokens), a casual session of ~50 tool calls/day costs single-digit pence. A heavy agentic-dev day (300+ tool calls) sits around 20-50p. Most of that is Stage 2 thinking output, which only fires on blocks — so the bill scales with how often the classifier *escalates*, not how often the agent runs commands.
 
 Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one short LLM call per agent action; Stage 2 is rarer + slightly chunkier. You can swap any stage to a local LLM via config if you want zero cost — see [`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md) for the planned Ollama / LM Studio path.
 
@@ -115,7 +115,7 @@ Static-layer hits (~30% of all calls in our usage) are free. Stage 1 is one shor
 
 ## Benchmark evidence
 
-The [INK-923 benchmark](./docs/benchmarks/ink-923-jev-vs-gemini.md) compares Jev with pinned Gemini variants on fixture data; the [raw evidence bundle](./docs/benchmarks/ink-923-jev-2026-09-20/) includes the methodology and results. It is benchmark-only evidence, not a live provider switch.
+The [INK-923 benchmark](./docs/benchmarks/ink-923-jev-vs-gemini.md) compares Jev with pinned Gemini variants on fixture data; the [raw evidence bundle](./docs/benchmarks/ink-923-jev-2026-09-20/) includes the methodology and results. These historical benchmark results do not deploy or change a running installation. This branch defaults new configurations to Jev.
 
 ---
 
@@ -147,8 +147,8 @@ Small, focused codebase. Core has no runtime deps. The OpenClaw adapter pulls in
 See [`INSTALL.md`](./INSTALL.md) for the full guide. TL;DR:
 
 ```bash
-# 1. Register a Gemini key (used by all stages by default)
-openclaw models auth login --provider google --method gemini-api-key
+# 1. Export the TypeSafe key for the OpenClaw process
+export TYPESAFE_API_KEY=your-typesafe-key-here
 
 # 2. Add to openclaw.json
 openclaw config patch '{"plugins":{"load":{"paths":["/path/to/io-auto-mode"]},"entries":{"io-auto-mode":{"enabled":true,"config":{"mode":"classify"}}}}}'
@@ -181,9 +181,9 @@ cd io-auto-mode
 pnpm install
 node scripts/build.mjs
 
-# 2. Drop your Gemini key where the hooks can read it
+# 2. Drop your TypeSafe key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'TYPESAFE_API_KEY=your-typesafe-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the three PreToolUse matchers into ~/.claude/settings.json
 #    (full snippet in INSTALL.md — Bash + mcp__.* + Read|Write|Edit)
@@ -207,9 +207,9 @@ cd io-auto-mode
 pnpm install
 node scripts/build.mjs
 
-# 2. Drop your Gemini key where the hooks can read it
+# 2. Drop your TypeSafe key where the hooks can read it
 mkdir -p ~/.io-auto-mode
-echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'TYPESAFE_API_KEY=your-typesafe-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire five hooks into ~/.cursor/hooks.json
 #    (full snippet in INSTALL.md — beforeSubmitPrompt, beforeShellExecution,
@@ -236,9 +236,9 @@ cd io-auto-mode
 pnpm install
 node scripts/build.mjs
 
-# 2. Drop your Gemini key where the hook can read it
+# 2. Drop your TypeSafe key where the hook can read it
 mkdir -p ~/.io-auto-mode
-echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'TYPESAFE_API_KEY=your-typesafe-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the PreToolUse hook into your agent's .agents/hooks.json
 #    Replace <repo-path> with the absolute path you cloned to.
@@ -293,9 +293,9 @@ cd io-auto-mode
 pnpm install
 node scripts/build.mjs
 
-# 2. Drop your Gemini key where the hook can read it
+# 2. Drop your TypeSafe key where the hook can read it
 mkdir -p ~/.io-auto-mode
-echo 'GOOGLE_GENERATIVE_AI_API_KEY=your-key-here' >> ~/.io-auto-mode/.env
+echo 'TYPESAFE_API_KEY=your-typesafe-key-here' >> ~/.io-auto-mode/.env
 
 # 3. Wire the PreToolUse hook into .codex/hooks.json
 #    Replace <repo-path> with the absolute path you cloned to.
@@ -350,21 +350,17 @@ All options under `plugins.entries.io-auto-mode.config`:
 | Option | Default | Description |
 |---|---|---|
 | `mode` | `classify` | `classify` / `yolo` / `strict` |
-| `stage1Model` | `google/gemini-3.8-flash` | Fast LLM for Stage 1 |
-| `stage1Fallback` | `google/gemini-3.8-flash` | Stage 1 fallback |
-| `stage2Model` | `google/gemini-3.8-flash` | Thinking LLM for Stage 2 |
-| `stage2Fallback` | `google/gemini-3.8-flash` | Stage 2 fallback |
+| `stage1Model` | `typesafe/jev-1.13.0` | Fast LLM for Stage 1 |
+| `stage1Fallback` | `typesafe/jev-1.13.0` | Stage 1 fallback |
+| `stage2Model` | `typesafe/jev-1.13.0` | Choice classifier for Stage 2 |
+| `stage2Fallback` | `typesafe/jev-1.13.0` | Stage 2 fallback |
 | `userAllowPatterns` | `[]` | Extra shell regex patterns always allowed |
 | `userBlockPatterns` | `[]` | Extra shell regex patterns always blocked |
 | `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |
 | `jevShadow.enabled` | `false` | Run a detached, non-authoritative Jev comparison after eligible Gemini decisions |
 | `mcpBlockPatterns` | `[]` | MCP canonical-name regexes blocked before allow or the LLM |
 
-Defaults are all-Gemini for cost + latency. Any provider OpenClaw supports
-(Anthropic, OpenAI, etc.) can be swapped in by changing the model strings —
-see [`specs/ai-sdk-migration.md`](./specs/ai-sdk-migration.md) for the planned
-migration to AI SDK that makes this even smoother (Ollama / LM Studio /
-self-hosted included).
+Defaults use Jev at both stages through the TypeSafe SDK. Supply `TYPESAFE_API_KEY` in the hook environment (or the shared `.env` file). Explicit `google/...` and `anthropic/...` configurations remain supported with their respective credentials. Existing model overrides take precedence over the new defaults; remove or change them to select Jev. The optional shadow compares only explicit Gemini decisions and stays disabled by default.
 
 For the `Read` / `Write` / `Edit` file-tool classifier, configure `fileZones` (allowRead / allowWrite / deny) in either user-global (`~/.io-auto-mode/config.json`) or per-project (`<project>/.io-auto-mode.json`). Layers merge.
 
@@ -384,7 +380,7 @@ Full setup, the receipt schema, and the threat boundary: [`INSTALL.md`](./INSTAL
 
 ### Optional local Jev shadow
 
-Set `"jevShadow": { "enabled": true }` in `~/.io-auto-mode/config.json` and provide `TYPESAFE_API_KEY` in the hook environment to record non-authoritative Jev comparisons. Gemini remains the sole enforcement decision. Jev uses pinned model `jev-1.13.0` and the pinned threshold policy; provider errors and the 30-second worker deadline cannot delay or alter the hook response.
+Set `"jevShadow": { "enabled": true }` in `~/.io-auto-mode/config.json` and provide `TYPESAFE_API_KEY` in the hook environment to record non-authoritative Jev comparisons. For an explicit Gemini configuration, Gemini remains the sole enforcement decision. This option does nothing for the default Jev enforcement path. Jev uses pinned model `jev-1.13.0` and the pinned threshold policy; provider errors and the 30-second worker deadline cannot delay or alter the hook response.
 
 Shadow records are metadata-only and local at `~/.io-auto-mode/jev-shadow-log.jsonl`. The active file rotates at 10 MiB with five numbered generations. Summarise it without printing request content:
 

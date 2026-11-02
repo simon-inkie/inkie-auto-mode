@@ -13,11 +13,15 @@
  * back-compat fallbacks, tried in that order.
  */
 
+import { jevModelCall } from "../../../core/jev-model-call.js";
+
 import type { ModelCallFn, ModelCallOptions } from "../../../core/types.js";
 
 export const modelCall: ModelCallFn = async (options: ModelCallOptions) => {
   const [provider, ...modelParts] = options.model.split("/");
   const modelId = modelParts.join("/");
+
+  if (provider === "typesafe") return jevModelCall(options);
 
   if (provider === "google" || provider === "gemini") {
     // `||`, not `??`: these vars are routinely set-but-empty in agent

@@ -19,10 +19,7 @@ Pick whichever runtime you use; they all share the same `core/` classifier.
 ## Requirements
 
 - Node.js 22+
-- A Google Gemini API key (defaults use `gemini-3.8-flash` for both Stage 1
-  and the Stage 2 thinking classifier: fast, cheap, and accurate enough for
-  classification). You can swap providers
-  via config; see Configuration Reference below.
+- A TypeSafe API key in `TYPESAFE_API_KEY`. Defaults use pinned Jev `jev-1.13.0` at both stages. Explicit Google/Anthropic model overrides are still supported; see Configuration Reference below.
 - For the OpenClaw adapter: OpenClaw **2026.4.2+**.
 
 ---
@@ -56,13 +53,13 @@ read:
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+TYPESAFE_API_KEY=your-typesafe-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
 
-`GOOGLE_GENERATIVE_AI_API_KEY` is the canonical name. `GEMINI_API_KEY` and
-`GOOGLE_API_KEY` are still read as fallbacks, in that order, so existing
+`TYPESAFE_API_KEY` is required for the Jev default. For explicit Google model selections, `GOOGLE_GENERATIVE_AI_API_KEY`, `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` are read in that order, so existing
 installs keep working.
 
 Anthropic / OpenAI / other provider keys go in the same file if you've
@@ -290,12 +287,12 @@ running the TypeScript via `tsx` if you're hacking on the adapter.
 ### Step 2: Provide your API key
 
 Cursor hooks (like Claude Code's) run in a sandboxed environment that doesn't
-inherit your shell's environment variables. Put your Gemini key in:
+inherit your shell's environment variables. Put your TypeSafe key in:
 
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+TYPESAFE_API_KEY=your-typesafe-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
@@ -431,12 +428,12 @@ to running the TypeScript via `tsx` if you're hacking on the adapter.
 ### Step 2: Provide your API key
 
 agy hooks run as subprocesses that don't inherit your shell's environment. Drop your
-Gemini key where the hook can read it:
+TypeSafe key where the hook can read it:
 
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+TYPESAFE_API_KEY=your-typesafe-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
@@ -530,17 +527,17 @@ running the TypeScript via `tsx` if you're hacking on the adapter.
 ### Step 2: Provide your API key
 
 Codex hooks run as subprocesses that don't inherit your shell's environment. Drop
-your Gemini key where the hook can read it:
+your TypeSafe key where the hook can read it:
 
 ```bash
 mkdir -p ~/.io-auto-mode
 cat > ~/.io-auto-mode/.env <<'EOF'
-GOOGLE_GENERATIVE_AI_API_KEY=your-google-gemini-key-here
+TYPESAFE_API_KEY=your-typesafe-key-here
 EOF
 chmod 600 ~/.io-auto-mode/.env
 ```
 
-Same path every other adapter uses. `GEMINI_API_KEY` and `GOOGLE_API_KEY` are read
+Same path every other adapter uses. For explicit Google models, `GEMINI_API_KEY` and `GOOGLE_API_KEY` are read
 as fallbacks; the legacy `~/io-data/.env` is also accepted.
 
 ### Step 3: Wire the PreToolUse hook into `.codex/hooks.json`
@@ -647,20 +644,13 @@ step needed.
 
 ### Step 1: Register your AI provider key
 
-**Do NOT use `openclaw onboard`** — it reruns the full setup wizard.
-
-Use `openclaw models auth login` instead. It picks up existing env vars
-automatically and doesn't touch your default model:
+Export the TypeSafe credential in the environment of the OpenClaw process:
 
 ```bash
-# Google / Gemini (used by default config for all stages)
-openclaw models auth login --provider google --method gemini-api-key
+export TYPESAFE_API_KEY=your-typesafe-key-here
 ```
 
-This will detect an existing `GEMINI_API_KEY` env var and prompt to confirm.
-Omit `--set-default` to keep your current default model. If you'd rather route
-some stages through Anthropic, OpenAI, etc., register those provider keys too
-and set the model strings in config (see Configuration Reference).
+Jev uses this environment variable directly. Existing explicit Google/Anthropic model selections still use OpenClaw provider authentication or the corresponding environment variables. No key belongs in the plugin JSON.
 
 ---
 
@@ -679,10 +669,10 @@ Add to `plugins.load.paths` so OpenClaw discovers it on startup:
         "enabled": true,
         "config": {
           "mode": "classify",
-          "stage1Model": "google/gemini-3.8-flash",
-          "stage1Fallback": "google/gemini-3.8-flash",
-          "stage2Model": "google/gemini-3.8-flash",
-          "stage2Fallback": "google/gemini-3.8-flash"
+          "stage1Model": "typesafe/jev-1.13.0",
+          "stage1Fallback": "typesafe/jev-1.13.0",
+          "stage2Model": "typesafe/jev-1.13.0",
+          "stage2Fallback": "typesafe/jev-1.13.0"
         }
       }
     }
@@ -734,11 +724,11 @@ All options live under `plugins.entries.io-auto-mode.config`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `mode` | `classify` | `classify` (normal), `yolo` (allow all), `strict` (block unless on allowlist) |
-| `stage1Model` | `google/gemini-3.8-flash` | Fast LLM for Stage 1 classification |
+| `stage1Model` | `typesafe/jev-1.13.0` | Fast LLM for Stage 1 classification |
 | `jevShadow.enabled` | `false` | Detached local Jev comparison; never changes the Gemini enforcement result |
-| `stage1Fallback` | `google/gemini-3.8-flash` | Fallback if Stage 1 model unavailable |
-| `stage2Model` | `google/gemini-3.8-flash` | Thinking LLM for Stage 2 (escalated blocks) |
-| `stage2Fallback` | `google/gemini-3.8-flash` | Fallback if Stage 2 model unavailable |
+| `stage1Fallback` | `typesafe/jev-1.13.0` | Fallback if Stage 1 model unavailable |
+| `stage2Model` | `typesafe/jev-1.13.0` | Choice classifier for Stage 2 (escalated blocks) |
+| `stage2Fallback` | `typesafe/jev-1.13.0` | Fallback if Stage 2 model unavailable |
 | `userAllowPatterns` | `[]` | Additional regex patterns to always allow |
 | `userBlockPatterns` | `[]` | Additional regex patterns to always block |
 

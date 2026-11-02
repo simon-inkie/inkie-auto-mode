@@ -17,6 +17,8 @@ import { JEV_THRESHOLDED_A, thresholdedADecision, validateJevChoice } from '../c
 import { DEFAULT_CONFIG, mergeClassifierConfig, type ShadowJob } from '../core/types.js';
 import { summariseJevShadowJsonl } from '../scripts/summarise-jev-shadow.js';
 
+const GEMINI_CONFIG = { ...DEFAULT_CONFIG, stage1Model: 'google/gemini-3.8-flash', stage1Fallback: 'google/gemini-3.8-flash', stage2Model: 'google/gemini-3.8-flash', stage2Fallback: 'google/gemini-3.8-flash' };
+
 function tempLog(): string {
   return join(mkdtempSync(join(tmpdir(), 'jev-shadow-')), 'shadow.jsonl');
 }
@@ -78,8 +80,8 @@ describe('Gemini enforcement remains authoritative', () => {
   test('dynamic success dispatches once without changing the Gemini result', async () => {
     const jobs: ShadowJob[] = [];
     const enabled = { dispatch: (value: ShadowJob) => jobs.push(value) };
-    const disabled = await classify('custom-command', [], async () => 'ALLOW', DEFAULT_CONFIG);
-    const shadowed = await classify('custom-command', [], async () => 'ALLOW', DEFAULT_CONFIG, { shadowDispatcher: enabled });
+    const disabled = await classify('custom-command', [], async () => 'ALLOW', GEMINI_CONFIG);
+    const shadowed = await classify('custom-command', [], async () => 'ALLOW', GEMINI_CONFIG, { shadowDispatcher: enabled });
     assert.deepEqual({ ...shadowed, durationMs: 0 }, { ...disabled, durationMs: 0 });
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].gemini.decision, 'allow');
@@ -89,15 +91,15 @@ describe('Gemini enforcement remains authoritative', () => {
   test('static and classifier-error decisions are ineligible', async () => {
     let dispatches = 0;
     const dispatcher = { dispatch: () => { dispatches += 1; } };
-    await classify('pwd', [], async () => 'ALLOW', DEFAULT_CONFIG, { shadowDispatcher: dispatcher });
-    await classify('custom-command', [], async () => { throw new Error('provider'); }, DEFAULT_CONFIG, { shadowDispatcher: dispatcher });
+    await classify('pwd', [], async () => 'ALLOW', GEMINI_CONFIG, { shadowDispatcher: dispatcher });
+    await classify('custom-command', [], async () => { throw new Error('provider'); }, GEMINI_CONFIG, { shadowDispatcher: dispatcher });
     assert.equal(dispatches, 0);
   });
 
   test('a dispatcher failure cannot alter or reject Gemini enforcement', async () => {
     const result = await classify('custom-command', [], async (options) => options.stage === 'stage1'
       ? 'BLOCK'
-      : JSON.stringify({ thinking: '', decision: 'BLOCK', reason: 'unsafe' }), DEFAULT_CONFIG, {
+      : JSON.stringify({ thinking: '', decision: 'BLOCK', reason: 'unsafe' }), GEMINI_CONFIG, {
       shadowDispatcher: { dispatch: () => { throw new Error('shadow failure'); } },
     });
     assert.equal(result.decision, 'block');
@@ -133,7 +135,7 @@ describe('Gemini enforcement remains authoritative', () => {
       let terminal: Promise<void> | undefined;
       const result = await classify('custom-command', [], async (options) => options.stage === 'stage1'
         ? 'BLOCK'
-        : JSON.stringify({ thinking: '', decision: 'BLOCK', reason: 'Gemini block' }), DEFAULT_CONFIG, {
+        : JSON.stringify({ thinking: '', decision: 'BLOCK', reason: 'Gemini block' }), GEMINI_CONFIG, {
         shadowDispatcher: {
           dispatch(value) {
             terminal = executeJevShadow({ ...value, logPath: path }, scenario.client, scenario.timeoutMs);
