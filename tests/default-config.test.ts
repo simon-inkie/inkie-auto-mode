@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { DEFAULT_CONFIG } from '../core/types.js';
 
-test('default classifier stages are pinned to Gemini 3.8 Flash', () => {
+test('default classifier stages are pinned to Jev 1.13.0', () => {
   assert.deepEqual(
     [
       DEFAULT_CONFIG.stage1Model,
@@ -10,6 +10,6 @@ test('default classifier stages are pinned to Gemini 3.8 Flash', () => {
       DEFAULT_CONFIG.stage2Model,
       DEFAULT_CONFIG.stage2Fallback,
     ],
-    Array(4).fill('google/gemini-3.8-flash'),
+    Array(4).fill('typesafe/jev-1.13.0'),
   );
 });
