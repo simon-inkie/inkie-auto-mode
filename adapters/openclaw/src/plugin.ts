@@ -2,6 +2,7 @@ import { definePluginEntry, type OpenClawPluginApi } from 'openclaw/plugin-sdk/p
 import { classify } from '../../../core/classifier.js';
 import { classifyMcpCall, parseOpenClawMcpToolName } from '../../../core/mcp.js';
 import { logDecision } from '../../../core/logger.js';
+import { createJevShadowDispatcher } from '../../../core/jev-shadow.js';
 import { serialiseTranscript } from '../../../core/transcript.js';
 import type {
   ClassifierConfig,
@@ -9,7 +10,7 @@ import type {
   ModelCallFn,
   ModelCallOptions,
 } from '../../../core/types.js';
-import { DEFAULT_CONFIG } from '../../../core/types.js';
+import { mergeClassifierConfig } from '../../../core/types.js';
 import { setLogPath } from '../../../core/logger.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -32,19 +33,7 @@ function pushMessage(sessionId: string, msg: ConversationMessage): void {
 }
 
 function resolveConfig(pluginConfig?: Record<string, unknown>): ClassifierConfig {
-  const cfg = pluginConfig ?? {};
-  return {
-    stage1Model: (cfg.stage1Model as string) ?? DEFAULT_CONFIG.stage1Model,
-    stage1Fallback: (cfg.stage1Fallback as string) ?? DEFAULT_CONFIG.stage1Fallback,
-    stage2Model: (cfg.stage2Model as string) ?? DEFAULT_CONFIG.stage2Model,
-    stage2Fallback: (cfg.stage2Fallback as string) ?? DEFAULT_CONFIG.stage2Fallback,
-    mode: (cfg.mode as ClassifierConfig['mode']) ?? DEFAULT_CONFIG.mode,
-    nonMainMode: DEFAULT_CONFIG.nonMainMode,
-    userAllowPatterns: (cfg.userAllowPatterns as string[]) ?? DEFAULT_CONFIG.userAllowPatterns,
-    userBlockPatterns: (cfg.userBlockPatterns as string[]) ?? DEFAULT_CONFIG.userBlockPatterns,
-    mcpAllowPatterns: (cfg.mcpAllowPatterns as string[]) ?? DEFAULT_CONFIG.mcpAllowPatterns,
-    mcpBlockPatterns: (cfg.mcpBlockPatterns as string[]) ?? DEFAULT_CONFIG.mcpBlockPatterns,
-  };
+  return mergeClassifierConfig(pluginConfig);
 }
 
 type OpenClawModelApi = Pick<OpenClawPluginApi, 'config' | 'runtime'>;
@@ -160,6 +149,10 @@ export default definePluginEntry({
 
       const pluginConfig = api.pluginConfig;
       const config = resolveConfig(pluginConfig);
+      const shadowDispatcher = createJevShadowDispatcher({
+        config,
+        workerUrl: new URL('../dist/jev-shadow-worker.js', import.meta.url),
+      });
       const command = event.toolName === 'exec'
         ? event.params.command as string | undefined
         : undefined;
@@ -181,10 +174,11 @@ export default definePluginEntry({
             config,
             isMainSession: true,
             source: 'direct',
+            shadowDispatcher,
           }));
         } else {
           action = command as string;
-          result = await classify(action, transcript, modelCallFn, config);
+          result = await classify(action, transcript, modelCallFn, config, { shadowDispatcher });
         }
       } catch (err) {
         // MCP calls fail closed: operators may rely on this plugin as the

@@ -23,6 +23,8 @@ const AGY_ROOT = join(ROOT, "adapters/antigravity");
 const AGY_DIST = join(AGY_ROOT, "dist");
 const CODEX_ROOT = join(ROOT, "adapters/codex");
 const CODEX_DIST = join(CODEX_ROOT, "dist");
+const OPENCLAW_ROOT = join(ROOT, "adapters/openclaw");
+const OPENCLAW_DIST = join(OPENCLAW_ROOT, "dist");
 
 const NODE_BUILTINS = [
   "fs", "fs/promises", "path", "os", "url", "util", "crypto",
@@ -42,6 +44,20 @@ function makeExecutable(...paths) {
   for (const p of paths) {
     chmodSync(p, 0o755);
   }
+}
+
+async function buildShadowWorker(outputDir) {
+  await build({
+    entryPoints: [join(ROOT, "core/jev-shadow-worker.ts")],
+    outfile: join(outputDir, "jev-shadow-worker.js"),
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    external: EXTERNALS,
+    sourcemap: "inline",
+    logLevel: "warning",
+  });
 }
 
 if (existsSync(DIST)) rmSync(DIST, { recursive: true });
@@ -74,6 +90,7 @@ await build({
   logLevel: "warning",
   banner: { js: SHEBANG },
 });
+await buildShadowWorker(DIST);
 
 // The core classifier reads prompts via `__dirname/../prompts/system.txt`.
 cpSync(join(ROOT, "prompts"), join(CC_ROOT, "prompts"), { recursive: true });
@@ -133,6 +150,7 @@ await build({
   logLevel: "warning",
   banner: { js: SHEBANG },
 });
+await buildShadowWorker(CURSOR_DIST);
 
 // Cursor adapter shares the same prompts/ as Claude Code
 cpSync(join(ROOT, "prompts"), join(CURSOR_ROOT, "prompts"), { recursive: true });
@@ -168,6 +186,7 @@ await build({
   logLevel: "warning",
   banner: { js: SHEBANG },
 });
+await buildShadowWorker(AGY_DIST);
 
 // The bundled classifier resolves prompts relative to adapters/antigravity/dist/.
 cpSync(join(ROOT, "prompts"), join(AGY_ROOT, "prompts"), { recursive: true });
@@ -196,6 +215,7 @@ await build({
   logLevel: "warning",
   banner: { js: SHEBANG },
 });
+await buildShadowWorker(CODEX_DIST);
 
 // The core classifier reads prompts via `__dirname/../prompts/system.txt`.
 // The bundled dist sits at adapters/codex/dist/, so copy prompts alongside.
@@ -204,3 +224,10 @@ cpSync(join(ROOT, "prompts"), join(CODEX_ROOT, "prompts"), { recursive: true });
 makeExecutable(join(CODEX_DIST, "pretooluse-hook.js"));
 
 console.log(`[build] codex pretooluse hook → ${CODEX_DIST}/pretooluse-hook.js`);
+
+// OpenClaw loads its plugin from TypeScript source, but the detached worker is
+// a standalone Node artefact beside the plugin package.
+if (existsSync(OPENCLAW_DIST)) rmSync(OPENCLAW_DIST, { recursive: true });
+mkdirSync(OPENCLAW_DIST, { recursive: true });
+await buildShadowWorker(OPENCLAW_DIST);
+console.log(`[build] openclaw shadow worker → ${OPENCLAW_DIST}/jev-shadow-worker.js`);

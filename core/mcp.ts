@@ -4,6 +4,7 @@ import type {
   ClassifierDecision,
   ModelCallFn,
   SourceProvenance,
+  ShadowDispatcher,
   TranscriptEntry,
 } from './types.js';
 
@@ -141,6 +142,7 @@ export async function classifyMcpCall(options: {
   isMainSession?: boolean;
   source?: SourceProvenance;
   classifyFn?: typeof classify;
+  shadowDispatcher?: ShadowDispatcher;
 }): Promise<McpClassification> {
   const identity = parseMcpToolName(options.toolName);
   if (!identity) throw new Error(`Invalid canonical MCP tool name: ${options.toolName}`);
@@ -156,6 +158,7 @@ export async function classifyMcpCall(options: {
       isMainSession: options.isMainSession ?? true,
       source: options.source ?? 'direct',
       actionKind: 'mcp',
+      shadowDispatcher: options.shadowDispatcher,
     },
   );
   return { action, identity, result };

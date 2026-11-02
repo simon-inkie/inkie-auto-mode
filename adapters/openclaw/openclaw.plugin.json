@@ -15,7 +15,13 @@
       "userAllowPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
       "userBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
       "mcpAllowPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
-      "mcpBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] }
+      "mcpBlockPatterns": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "jevShadow": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "enabled": { "type": "boolean", "default": false } },
+        "default": { "enabled": false }
+      }
     }
   }
 }

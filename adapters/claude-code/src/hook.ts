@@ -43,7 +43,8 @@ import { classify } from "../../../core/classifier.js";
 import { classifyMcpCall, parseMcpToolName } from "../../../core/mcp.js";
 import { serialiseTranscript } from "../../../core/transcript.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
-import { DEFAULT_CONFIG } from "../../../core/types.js";
+import { createJevShadowDispatcher } from "../../../core/jev-shadow.js";
+import { DEFAULT_CONFIG, mergeClassifierConfig } from "../../../core/types.js";
 import type {
   ClassifierConfig,
   ClassifierDecision,
@@ -113,8 +114,7 @@ function loadConfig(): ClassifierConfig {
   for (const path of candidates) {
     try {
       const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
-      return { ...DEFAULT_CONFIG, ...parsed };
+      return mergeClassifierConfig(JSON.parse(raw));
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
@@ -174,6 +174,10 @@ async function main() {
     : [];
   const transcript = serialiseTranscript(messages);
   const config = loadConfig();
+  const shadowDispatcher = createJevShadowDispatcher({
+    config,
+    workerUrl: new URL("./jev-shadow-worker.js", import.meta.url),
+  });
 
   let action: string;
   let result: ClassifierDecision;
@@ -187,12 +191,14 @@ async function main() {
         config,
         isMainSession: true,
         source: "direct",
+        shadowDispatcher,
       }));
     } else {
       action = shellCommand as string;
       result = await classify(action, transcript, modelCall, config, {
         isMainSession: true,
         source: "direct",
+        shadowDispatcher,
       });
     }
   } catch (err) {

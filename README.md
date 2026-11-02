@@ -357,6 +357,7 @@ All options under `plugins.entries.io-auto-mode.config`:
 | `userAllowPatterns` | `[]` | Extra shell regex patterns always allowed |
 | `userBlockPatterns` | `[]` | Extra shell regex patterns always blocked |
 | `mcpAllowPatterns` | `[]` | MCP canonical-name regexes allowed before the LLM |
+| `jevShadow.enabled` | `false` | Run a detached, non-authoritative Jev comparison after eligible Gemini decisions |
 | `mcpBlockPatterns` | `[]` | MCP canonical-name regexes blocked before allow or the LLM |
 
 Defaults are all-Gemini for cost + latency. Any provider OpenClaw supports
@@ -380,6 +381,18 @@ Full setup, the receipt schema, and the threat boundary: [`INSTALL.md`](./INSTAL
 ---
 
 ## Decision log
+
+### Optional local Jev shadow
+
+Set `"jevShadow": { "enabled": true }` in `~/.io-auto-mode/config.json` and provide `TYPESAFE_API_KEY` in the hook environment to record non-authoritative Jev comparisons. Gemini remains the sole enforcement decision. Jev uses pinned model `jev-1.13.0` and the pinned threshold policy; provider errors and the 30-second worker deadline cannot delay or alter the hook response.
+
+Shadow records are metadata-only and local at `~/.io-auto-mode/jev-shadow-log.jsonl`. The active file rotates at 10 MiB with five numbered generations. Summarise it without printing request content:
+
+```bash
+pnpm shadow:summary
+```
+
+The command reports eligible, scheduled and completed records, orphan counts, agreement/drift, provider status/error rate, stage mix and p50/p95 latency. No remote telemetry is used.
 
 Every classification is logged with timestamp, command, stage (static / stage1 / stage2 / error), decision, duration, model used, and chain-of-thought reasoning where applicable:
 

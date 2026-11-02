@@ -46,6 +46,9 @@ export interface ClassifierConfig {
   /** Regexes matched against canonical MCP names, e.g. mcp__github__get_issue. */
   mcpAllowPatterns: string[];
   mcpBlockPatterns: string[];
+  jevShadow: {
+    enabled: boolean;
+  };
 }
 
 /** Default configuration */
@@ -60,7 +63,41 @@ export const DEFAULT_CONFIG: ClassifierConfig = {
   userBlockPatterns: [],
   mcpAllowPatterns: [],
   mcpBlockPatterns: [],
+  jevShadow: { enabled: false },
 };
+
+/** Merge user configuration without allowing malformed shadow config to enable it. */
+export function mergeClassifierConfig(value: unknown): ClassifierConfig {
+  const parsed = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<ClassifierConfig>
+    : {};
+  const shadow = parsed.jevShadow;
+  return {
+    ...DEFAULT_CONFIG,
+    ...parsed,
+    jevShadow: {
+      enabled: Boolean(
+        shadow
+        && typeof shadow === 'object'
+        && !Array.isArray(shadow)
+        && (shadow as { enabled?: unknown }).enabled === true,
+      ),
+    },
+  };
+}
+
+export interface ShadowJob {
+  correlationId: string;
+  actionKind: 'shell' | 'mcp';
+  systemPrompt: string;
+  userMessage: string;
+  gemini: Pick<ClassifierDecision, 'decision' | 'stage' | 'model'>;
+}
+
+/** Synchronous, best-effort boundary. Implementations must never throw. */
+export interface ShadowDispatcher {
+  dispatch(job: ShadowJob): void;
+}
 
 /** Provider-agnostic model call interface */
 export interface ModelCallOptions {

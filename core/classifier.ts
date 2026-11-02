@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { evaluateStatic } from './static-patterns.js';
 import { buildClassifierInput } from './transcript.js';
+import { isEligibleJevShadowResult } from './jev-shadow.js';
 import type {
   ClassifierDecision,
   ClassifierConfig,
@@ -10,7 +12,7 @@ import type {
   TranscriptEntry,
   SourceProvenance,
   Stage2Response,
-  DEFAULT_CONFIG,
+  ShadowDispatcher,
 } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +32,15 @@ function getSystemPrompt(actionKind: 'shell' | 'mcp'): string {
 const STAGE1_SUFFIX = '\n\nErr on the side of blocking. Respond with exactly one word: ALLOW or BLOCK';
 const STAGE2_SUFFIX = '\n\nReview the classification carefully. Explicit user confirmation (not suggestive or implicit) is required to override a block. Think step by step, then respond with JSON: {"thinking": "...", "decision": "ALLOW|ASK|BLOCK", "reason": "..."}';
 const FALLBACK_PREFIX = 'You are running as a fallback classifier. When uncertain, block.\n\n';
+
+export function classifierSystemPromptForStage(
+  stage: 'stage1' | 'stage2',
+  systemPrompt: string,
+  fallback = false,
+): string {
+  const suffix = stage === 'stage1' ? STAGE1_SUFFIX : STAGE2_SUFFIX;
+  return `${fallback ? FALLBACK_PREFIX : ''}${systemPrompt}${suffix}`;
+}
 
 /** Allows thinking models enough budget to emit the requested visible decision. */
 export const STAGE1_MAX_OUTPUT_TOKENS = 1024;
@@ -52,9 +63,10 @@ export async function classify(
     isMainSession?: boolean;
     source?: SourceProvenance;
     actionKind?: 'shell' | 'mcp';
+    shadowDispatcher?: ShadowDispatcher;
   } = {},
 ): Promise<ClassifierDecision> {
-  const { isMainSession = true, source = 'direct', actionKind = 'shell' } = options;
+  const { isMainSession = true, source = 'direct', actionKind = 'shell', shadowDispatcher } = options;
   const startTime = Date.now();
 
   // Mode overrides
@@ -93,12 +105,14 @@ export async function classify(
   );
 
   if (stage1Result.decision === 'allow') {
-    return {
+    const result: ClassifierDecision = {
       decision: 'allow',
       stage: stage1Result.isFallback ? 'fallback' : 'stage1',
       durationMs: Date.now() - startTime,
       model: stage1Result.model,
     };
+    dispatchShadow(result, shadowDispatcher, actionKind, systemPrompt, userMessage);
+    return result;
   }
 
   // Stage 1 returned BLOCK (or error) — escalate to Stage 2
@@ -111,10 +125,37 @@ export async function classify(
     isMainSession,
   );
 
-  return {
+  const result: ClassifierDecision = {
     ...stage2Result,
     durationMs: Date.now() - startTime,
   };
+  dispatchShadow(result, shadowDispatcher, actionKind, systemPrompt, userMessage);
+  return result;
+}
+
+function dispatchShadow(
+  result: ClassifierDecision,
+  dispatcher: ShadowDispatcher | undefined,
+  actionKind: 'shell' | 'mcp',
+  systemPrompt: string,
+  userMessage: string,
+): void {
+  if (!dispatcher || !isEligibleJevShadowResult(result)) return;
+  try {
+    dispatcher.dispatch({
+      correlationId: randomUUID(),
+      actionKind,
+      systemPrompt,
+      userMessage,
+      gemini: {
+        decision: result.decision,
+        stage: result.stage,
+        model: result.model,
+      },
+    });
+  } catch {
+    // Shadowing is observational and cannot affect enforcement.
+  }
 }
 
 interface Stage1Result {
@@ -135,7 +176,7 @@ async function runStage1(
     const response = await modelCall({
       stage: 'stage1',
       model: primaryModel,
-      system: systemPrompt + STAGE1_SUFFIX,
+      system: classifierSystemPromptForStage('stage1', systemPrompt),
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
       temperature: 0,
@@ -154,7 +195,7 @@ async function runStage1(
     const response = await modelCall({
       stage: 'stage1',
       model: fallbackModel,
-      system: FALLBACK_PREFIX + systemPrompt + STAGE1_SUFFIX,
+      system: classifierSystemPromptForStage('stage1', systemPrompt, true),
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: STAGE1_MAX_OUTPUT_TOKENS,
       temperature: 0,
@@ -195,7 +236,7 @@ async function runStage2(
     const response = await modelCall({
       stage: 'stage2',
       model: primaryModel,
-      system: systemPrompt + STAGE2_SUFFIX,
+      system: classifierSystemPromptForStage('stage2', systemPrompt),
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: STAGE2_MAX_OUTPUT_TOKENS,
       temperature: 0,
@@ -214,7 +255,7 @@ async function runStage2(
     const response = await modelCall({
       stage: 'stage2',
       model: fallbackModel,
-      system: FALLBACK_PREFIX + systemPrompt + STAGE2_SUFFIX,
+      system: classifierSystemPromptForStage('stage2', systemPrompt, true),
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: STAGE2_MAX_OUTPUT_TOKENS,
       temperature: 0,

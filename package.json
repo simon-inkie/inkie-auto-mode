@@ -64,6 +64,7 @@
     "benchmark:jev": "tsx benchmarks/compare-jev.ts",
     "test": "tsx --test tests/*.test.ts",
     "test:dist": "node scripts/smoke-built-mcp.mjs",
+    "shadow:summary": "tsx scripts/summarise-jev-shadow.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "build": "node scripts/build.mjs",
@@ -71,11 +72,13 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@typesafe-ai/sdk": "0.6.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "openclaw": "^2026.4.2"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
   },
   "peerDependencies": {
     "openclaw": "^2026.4.2"

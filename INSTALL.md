@@ -735,6 +735,7 @@ All options live under `plugins.entries.io-auto-mode.config`:
 |--------|---------|-------------|
 | `mode` | `classify` | `classify` (normal), `yolo` (allow all), `strict` (block unless on allowlist) |
 | `stage1Model` | `google/gemini-3.8-flash` | Fast LLM for Stage 1 classification |
+| `jevShadow.enabled` | `false` | Detached local Jev comparison; never changes the Gemini enforcement result |
 | `stage1Fallback` | `google/gemini-3.8-flash` | Fallback if Stage 1 model unavailable |
 | `stage2Model` | `google/gemini-3.8-flash` | Thinking LLM for Stage 2 (escalated blocks) |
 | `stage2Fallback` | `google/gemini-3.8-flash` | Fallback if Stage 2 model unavailable |

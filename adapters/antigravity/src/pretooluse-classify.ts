@@ -52,7 +52,8 @@ for (const envPath of ENV_PATHS) {
 import { classify } from "../../../core/classifier.js";
 import { classifyMcpCall, parseMcpToolName } from "../../../core/mcp.js";
 import { logDecision, setLogPath } from "../../../core/logger.js";
-import { DEFAULT_CONFIG } from "../../../core/types.js";
+import { createJevShadowDispatcher } from "../../../core/jev-shadow.js";
+import { DEFAULT_CONFIG, mergeClassifierConfig } from "../../../core/types.js";
 import type { ClassifierConfig, ClassifierDecision } from "../../../core/types.js";
 import { modelCall } from "../../claude-code/src/model-call.js";
 import type { AgyPreToolUseInput, AgyPreToolResult } from "./types.js";
@@ -87,8 +88,7 @@ function loadConfig(): ClassifierConfig {
   for (const path of candidates) {
     try {
       const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<ClassifierConfig>;
-      return { ...DEFAULT_CONFIG, ...parsed };
+      return mergeClassifierConfig(JSON.parse(raw));
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (path === process.env.IO_AUTO_MODE_CONFIG || code !== "ENOENT") throw err;
@@ -174,6 +174,10 @@ export async function run(rawInput: string, deps: RunDeps = {}): Promise<AgyPreT
 
     let action: string;
     let result: ClassifierDecision;
+    const shadowDispatcher = createJevShadowDispatcher({
+      config,
+      workerUrl: new URL("./jev-shadow-worker.js", import.meta.url),
+    });
     try {
       ({ action, result } = await classifyMcpCall({
         toolName: mcpIdentity.canonicalName,
@@ -184,6 +188,7 @@ export async function run(rawInput: string, deps: RunDeps = {}): Promise<AgyPreT
         isMainSession: true,
         source: "direct",
         classifyFn,
+        shadowDispatcher,
       }));
     } catch (err) {
       process.stderr.write(JSON.stringify({
@@ -243,10 +248,15 @@ export async function run(rawInput: string, deps: RunDeps = {}): Promise<AgyPreT
     }
 
     let decision: string;
+    const shadowDispatcher = createJevShadowDispatcher({
+      config,
+      workerUrl: new URL("./jev-shadow-worker.js", import.meta.url),
+    });
     try {
       const result = await classifyFn(cmdLine, [], modelCall, config, {
         isMainSession: true,
         source: "direct",
+        shadowDispatcher,
       });
       decision = result.decision;
 
