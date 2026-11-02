@@ -83,6 +83,7 @@ describe('benchmark provider contract', () => {
     assert.equal(parseOnly('jev-c'), 'jev-c');
     assert.equal(parseOnly('jev-thresholded-a'), 'jev-thresholded-a');
     assert.equal(parseOnly('jev-native-thresholded-a'), 'jev-native-thresholded-a');
+    assert.equal(parseOnly('jev-compact-thresholded-a'), 'jev-compact-thresholded-a');
     assert.deepEqual(parseArgs(['--only', 'jev']), {
       repeats: 2,
       concurrency: 4,
@@ -91,6 +92,26 @@ describe('benchmark provider contract', () => {
     });
     assert.throws(() => parseOnly('gemini'), /--only must be one of/);
     assert.throws(() => parseOnly('native-thresholded-a'), /--only must be one of/);
+  });
+  test('compact thresholded A selector composes only the compact prompt and exact decision policy', () => {
+    const providers = selectBenchmarkProviders('jev-compact-thresholded-a');
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].provider, 'jev');
+    assert.equal(providers[0].model, 'jev-1.13.0');
+    assert.equal(providers[0].variant, 'compact');
+    assert.equal(providers[0].decisionPolicy, 'thresholded-a');
+    assert.deepEqual(providers[0].thresholds, {
+      stage1Allow: 0.86,
+      stage2Allow: 0.61,
+      stage2Block: 0.09,
+    });
+  });
+  test('legacy Jev prompt selectors remain distinct from compact', () => {
+    assert.equal(selectBenchmarkProviders('jev')[0].variant, 'current');
+    assert.deepEqual(selectBenchmarkProviders('jev-ab').map((provider) => provider.variant), ['current', 'native']);
+    assert.equal(selectBenchmarkProviders('jev-c')[0].variant, 'c');
+    assert.equal(selectBenchmarkProviders('jev-thresholded-a')[0].variant, 'current');
+    assert.equal(selectBenchmarkProviders('jev-native-thresholded-a')[0].variant, 'native');
   });
   test('native thresholded A selector composes exact prompt and decision policies', () => {
     const providers = selectBenchmarkProviders('jev-native-thresholded-a');

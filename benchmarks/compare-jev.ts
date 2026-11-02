@@ -21,7 +21,7 @@ interface Args {
   repeats: number;
   concurrency: number;
   baseline: string;
-  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | 'jev-thresholded-a' | 'jev-native-thresholded-a' | null;
+  only: 'gemini-flash' | 'gemini-flash-lite' | 'jev' | 'jev-ab' | 'jev-c' | 'jev-thresholded-a' | 'jev-native-thresholded-a' | 'jev-compact-thresholded-a' | null;
 }
 
 export interface BenchmarkComparisonResult {
@@ -50,8 +50,8 @@ export interface BenchmarkComparisonResult {
 }
 
 export function parseOnly(value: string): Args['only'] {
-  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c' || value === 'jev-thresholded-a' || value === 'jev-native-thresholded-a') return value;
-  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c, jev-thresholded-a, jev-native-thresholded-a (received ${value})`);
+  if (value === 'gemini-flash' || value === 'gemini-flash-lite' || value === 'jev' || value === 'jev-ab' || value === 'jev-c' || value === 'jev-thresholded-a' || value === 'jev-native-thresholded-a' || value === 'jev-compact-thresholded-a') return value;
+  throw new Error(`--only must be one of: gemini-flash, gemini-flash-lite, jev, jev-ab, jev-c, jev-thresholded-a, jev-native-thresholded-a, jev-compact-thresholded-a (received ${value})`);
 }
 
 export function parseArgs(values = process.argv.slice(2)): Args {
@@ -66,7 +66,7 @@ export function parseArgs(values = process.argv.slice(2)): Args {
       case '--baseline': baseline = values[++index] ?? baseline; break;
       case '--only': only = parseOnly(values[++index] ?? ''); break;
       case '--help':
-        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c|jev-thresholded-a|jev-native-thresholded-a] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
+        console.log('Usage: pnpm benchmark:jev -- [--only gemini-flash|gemini-flash-lite|jev|jev-ab|jev-c|jev-thresholded-a|jev-native-thresholded-a|jev-compact-thresholded-a] [--repeats 2] [--concurrency 4] [--baseline <public-commit>]');
         process.exit(0);
     }
   }
@@ -83,6 +83,7 @@ export function selectBenchmarkProviders(only: Args['only']): ProviderAdapter[] 
   const jevC = createJevProvider(undefined, 'c');
   const jevThresholdedA = createJevProvider(undefined, 'current', 'thresholded-a');
   const jevNativeThresholdedA = createJevProvider(undefined, 'native', 'thresholded-a');
+  const jevCompactThresholdedA = createJevProvider(undefined, 'compact', 'thresholded-a');
 
   switch (only) {
     case null: return [geminiFlash, geminiFlashLite, jevCurrent];
@@ -93,6 +94,7 @@ export function selectBenchmarkProviders(only: Args['only']): ProviderAdapter[] 
     case 'jev-c': return [jevC];
     case 'jev-thresholded-a': return [jevThresholdedA];
     case 'jev-native-thresholded-a': return [jevNativeThresholdedA];
+    case 'jev-compact-thresholded-a': return [jevCompactThresholdedA];
   }
 }
 
